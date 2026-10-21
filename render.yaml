@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: gz-admin-panel
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app --workers 1 --threads 8 --timeout 300 --bind 0.0.0.0:$PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: SECRET_KEY
+        generateValue: true
+      - key: FIREBASE_DB_URL
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN2_USERNAME
+        sync: false
+      - key: ADMIN2_PASSWORD
+        sync: false
+      - key: ADMIN2_CHAT_ID
+        sync: false
+      - key: APPWRITE_ENDPOINT
+        value: https://fra.cloud.appwrite.io/v1
+      - key: APPWRITE_PROJECT_ID
+        value: 6ac861f6001079d0d6e2
+      - key: APPWRITE_API_KEY   # set the real key in the Render dashboard
+        sync: false
+      - key: APPWRITE_BUCKET_ID
+        value: seller-apks
+      - key: TIMEZONE
+        value: Asia/Kolkata
