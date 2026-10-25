@@ -68,6 +68,16 @@ for _ in range(50):
     time.sleep(0.1)
 ok(any(str(c[1].get("chat_id")) == "4711" for c in h.CALLS), "...and the bot answers it")
 
+# ---------------------------------------------------------------- Telegram must never be pointed at a custom domain
+_b = Config.BASE_URL
+Config.BASE_URL = "https://api.dekhohatke.com"
+ok("BASE_URL" in Config.webhook_problem(), "BASE_URL on a custom domain (Render's 'primary URL') is flagged and webhooks are not registered")
+Config.BASE_URL = "https://drdev.dekhohatke.com/"
+ok(Config.webhook_problem(), "…also for the panel domain")
+Config.BASE_URL = "https://shop-xyz.onrender.com"
+ok(Config.webhook_problem() == "", "the onrender.com address is fine")
+Config.BASE_URL = _b
+
 # ---------------------------------------------------------------- the panel host serves all three panels, nothing else
 page = req(PANEL, "/login").get_data(as_text=True)
 ok("/static/img/logo-login.jpg" in page and 'rel="manifest"' in page and "/favicon.ico" in page and "Dekho Hatke" in page, "login page carries the Dekho Hatke logo, favicon, manifest and name")

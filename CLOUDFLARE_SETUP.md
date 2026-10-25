@@ -28,7 +28,7 @@ Do the steps **in this order** — it avoids downtime and lock-outs.
 2. Environment variables: everything in `README.md` §3 **plus**
    * `ROOT_DOMAIN` = `dekhohatke.com`   ← turns on the two-domain mode (`drdev.dekhohatke.com` + `api.dekhohatke.com`)
    * leave `ORIGIN_SECRET` **empty for now** (Step 5)
-   * don't set `BASE_URL` — the Telegram webhooks use Render's own address (`RENDER_EXTERNAL_URL`, set by Render) automatically
+   * set `BASE_URL` = `https://<your-service>.onrender.com` (the address Render gave the service, the CNAME target). Render lists a custom domain as the service's "primary URL" once you add one, and Telegram must NOT be pointed at it. The app refuses to register webhooks while `BASE_URL` is one of the custom domains and says so in the logs
 3. Wait for the first deploy. Note your service address, e.g. `dekho-panel.onrender.com`. Open the bot and send `/start` — it should already answer (the webhook is registered on that address).
 
 > Want another name than `drdev`? Set `PANEL_HOST=yourname.dekhohatke.com` (and use that name everywhere below).
@@ -84,7 +84,7 @@ Optional (recommended) — force HTTPS for the two hosts: **Rules → Redirect R
    * Expression: `(http.host in {"drdev.dekhohatke.com" "api.dekhohatke.com"})`
    * Modify header → **Set static** → header name `X-Origin-Auth` → value = your secret → Deploy.
    (Cloudflare *overwrites* this header on every request, so a visitor can never forge it.)
-3. **Then Render** → Environment → add `ORIGIN_SECRET` = the same secret → save (the service redeploys).
+3. **Then Render** → Environment → add a variable whose **key is exactly `ORIGIN_SECRET`** (not `X-Origin-Auth` — that is only the Cloudflare header name) with the same secret as its value → save (the service redeploys).
 4. Check (Step 9). If anything is wrong you can always **delete `ORIGIN_SECRET` in Render** to open it again.
 
 What the lock does in the app:
@@ -188,5 +188,5 @@ The app already shows the logo in the bot's **welcome (/start) message** (Telegr
 | Cloudflare **525 / 526** | Render certificate not issued yet (keep grey cloud until it is), or SSL mode isn't Full (strict) for the host (Step 4) |
 | **Too many redirects** | SSL mode is *Flexible* somewhere — use Full (strict) (Step 4) |
 | `drdev.` / `api.` answer "Not found" for everything after Step 5 | `ORIGIN_SECRET` differs from the Cloudflare header value, or the Transform Rule's expression misses the host. Fix the value or delete `ORIGIN_SECRET` in Render |
-| Bot silent | open `getWebhookInfo` (Step 9): the URL must be `https://xxxx.onrender.com/telegram/…`. A 404 there usually means `BASE_URL` points at `drdev.`/`api.` — remove `BASE_URL` in Render and redeploy |
+| Bot silent | open `getWebhookInfo` (Step 9): the URL must be `https://xxxx.onrender.com/telegram/…`. A 404 there usually means `BASE_URL` points at `drdev.`/`api.` — set `BASE_URL` to `https://<service>.onrender.com` in Render and redeploy |
 | Locked yourself out of the panel by the rate limit/WAF | wait 10 s; *Security → Events* shows which rule fired; add a Skip rule for your IP if needed |

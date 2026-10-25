@@ -80,7 +80,22 @@ class Config:
     _scheme = "http" if IS_DEV else "https"
 
     # Where Telegram calls the bots: the Render address itself (RENDER_EXTERNAL_URL is set by Render automatically).
-    BASE_URL = (os.getenv("BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or (f"{_scheme}://{PANEL_HOST}" if ROOT_DOMAIN else "")).rstrip("/")
+    # NOTE: once a custom domain is added, Render's RENDER_EXTERNAL_URL can become that custom domain (it shows it as the
+    # "primary URL"), but Telegram must call the plain onrender.com address -> prefer RENDER_EXTERNAL_HOSTNAME, and set BASE_URL by hand if in doubt.
+    _render_host = (os.getenv("RENDER_EXTERNAL_HOSTNAME") or "").strip()
+    BASE_URL = (os.getenv("BASE_URL") or (f"https://{_render_host}" if _render_host else "") or os.getenv("RENDER_EXTERNAL_URL")
+                or (f"{_scheme}://{PANEL_HOST}" if ROOT_DOMAIN else "")).rstrip("/")
+
+    @classmethod
+    def webhook_problem(cls):
+        """Why Telegram's webhooks cannot work with the current BASE_URL, or ''. In two-domain mode the webhook must use the raw
+        onrender.com address: the custom domains only answer Cloudflare."""
+        if cls.HOST_MODE and cls.BASE_URL:
+            host = cls.BASE_URL.split("://", 1)[-1].split("/")[0].lower()
+            if host in cls.HOSTS:
+                return (f"BASE_URL / RENDER_EXTERNAL_URL is {host}, one of your custom domains. Set the environment variable BASE_URL to the "
+                        "service's own address (https://<service>.onrender.com) so Telegram can reach the bots.")
+        return ""
 
     @classmethod
     def panel_url(cls, kind):

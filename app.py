@@ -99,9 +99,12 @@ def _background(app):
         if not (Config.BOT_TOKEN and Config.BASE_URL):
             log.warning("BOT_TOKEN / BASE_URL missing: webhook not registered automatically.")
             return
+        if Config.webhook_problem():
+            log.error("Webhooks NOT registered: %s", Config.webhook_problem())
+            return
         try:
             tg.set_webhook(f"{Config.BASE_URL}/telegram/{Config.path_secret('')}", Config.header_secret(""))
-            log.info("Main bot webhook registered")
+            log.info("Main bot webhook registered at %s", Config.BASE_URL)
             tg.set_start_menu(notify.admin_chats())  # the ≡ menu shows only /start
         except TelegramError as e:
             log.error("Webhook registration failed: %s", e)

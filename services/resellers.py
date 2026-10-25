@@ -232,7 +232,7 @@ def save(d, rid=None, avatar_bytes=None, actor="", admin=True):
 
 
 def register_webhook(r):
-    if not (Config.BASE_URL and r.get("bot_token")):
+    if not (Config.BASE_URL and r.get("bot_token")) or Config.webhook_problem():
         return False
     client = client_for(r["bot_token"])
     client.set_webhook(f"{Config.BASE_URL}/telegram/{Config.path_secret(r['id'])}/{r['id']}", Config.header_secret(r["id"]))

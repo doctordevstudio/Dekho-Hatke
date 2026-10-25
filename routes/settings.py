@@ -73,6 +73,8 @@ def test_welcome():
 def set_webhook():
     if not Config.BOT_TOKEN:
         raise ApiError("BOT_TOKEN is not set on the server.")
+    if Config.webhook_problem():
+        raise ApiError(Config.webhook_problem())
     try:
         tg.set_webhook(webhook_url(), Config.header_secret(""))
         from services import notify
