@@ -38,6 +38,8 @@ Python (Flask) · HTML/CSS/JS · Firebase Realtime Database · built for **Rende
 | `ADMIN2_USERNAME` / `ADMIN2_PASSWORD` / `ADMIN2_CHAT_ID` | optional second admin (everything except deleting); synced from env on every start |
 | `TIMEZONE` | default `Asia/Kolkata` (used for today / yesterday) |
 | `ROOT_DOMAIN` | `dekhohatke.com` → two custom domains: `drdev.` (admin, `/seller`, `/reseller`) and `api.` (license API); the Render address serves Telegram only (see **CLOUDFLARE_SETUP.md**) |
+| `TG_API_ID` / `TG_API_HASH` | from my.telegram.org → API development tools; only needed to link a personal Telegram account (Settings → Channel & account). Keep `SECRET_KEY` fixed: it encrypts the saved session |
+| `ADMIN_GATE` / `ADMIN_LINK_MINUTES` | default `1` / `30`: the admin sign-in page shows only after the bot's signed **Admin Login** link (`0` = open, local dev only) |
 | `ORIGIN_SECRET` | secret that Cloudflare adds as header `X-Origin-Auth`; without it the two custom domains answer 404 |
 
 4. Open `https://drdev.dekhohatke.com` (or `https://YOUR-SERVICE.onrender.com` while ROOT_DOMAIN is not set) → sign in → **Settings → Telegram bot**: set Admin Chat ID, support username, welcome message → Save → **Send test**.

@@ -13,6 +13,15 @@ def admin_chats():
     return [c for c in (s["admin_chat_id"], s["admin2_chat_id"]) if c]
 
 
+def refresh_admin_menus(old_chats=()):
+    """Admin chat ids changed: give "Admin Login" to the new ones and take it from the ones that were removed."""
+    now = admin_chats()
+    for c in old_chats:
+        if c and c not in now:
+            tg.drop_admin_menu(c)
+    tg.set_start_menu(now)
+
+
 def recipients(tenant="", *extra):
     """Who hears about payments. Main shop: UPI owner + super admin + 2nd admin. Reseller shop: UPI owner + the
     reseller. `extra` chat ids (e.g. the UPI owner's) come first."""

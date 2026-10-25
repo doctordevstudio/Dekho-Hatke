@@ -71,7 +71,8 @@ from bot.tg import tg
 ok(tg.set_start_menu(["999", "998"]) is True, "start menu registered")
 cmds = [p for m_, p, *_ in h.CALLS if m_ == "setMyCommands"][0]["commands"]
 ok(cmds == [{"command": "start", "description": "Start the bot"}], "≡ menu lists only /start")
-ok(len([1 for m_, p, *_ in h.CALLS if m_ == "deleteMyCommands"]) == 2 and any(m_ == "setChatMenuButton" for m_, *_ in h.CALLS), "admin-only command lists removed, menu button = commands")
+scoped = [p for m_, p, *_ in h.CALLS if m_ == "setMyCommands" and p.get("scope")]
+ok(sorted(str(p["scope"]["chat_id"]) for p in scoped) == ["998", "999"] and all([c["command"] for c in p["commands"]] == ["start", "adminlogin"] for p in scoped) and any(m_ == "setChatMenuButton" for m_, *_ in h.CALLS), "admin chats get Admin Login in the ≡ menu; menu button = commands")
 
 # ------------------------------------------------------------------ plan buttons in the bot: sort order + fixed UPI
 h.CALLS.clear(); P(cbq(902, "ap:" + APP, "Pat"))

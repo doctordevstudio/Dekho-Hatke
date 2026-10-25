@@ -147,7 +147,8 @@ This stops floods and credential stuffing on the admin / seller / reseller sign-
 
 | Check | Expected |
 |---|---|
-| Browser: `https://drdev.dekhohatke.com` | Dekho Hatke admin sign-in (maybe a one-time Cloudflare check) |
+| Browser: `https://drdev.dekhohatke.com` or `/login` typed directly | **Unauthorised** (no form, no hint) |
+| Telegram: super admin / 2nd admin → bot **≡ menu → Admin Login** | a button that opens the admin sign-in page (valid 30 minutes) |
 | Browser: `https://drdev.dekhohatke.com/seller` and `/reseller` | seller / reseller sign-in |
 | Browser: `https://drdev.dekhohatke.com/api/v1/x/verify` | "Not found" |
 | `https://xxxx.onrender.com/login` (Render's address) | "Not found" |
@@ -160,6 +161,11 @@ This stops floods and credential stuffing on the admin / seller / reseller sign-
 | Cloudflare → Security → Events | blocked/challenged requests appear here |
 
 The reseller bots' webhooks are re-registered automatically on every start; the panel's *Re-register webhook* button still exists.
+
+## Admin entrance (signed link) and the storage channel
+
+* **Only the admin sign-in is hidden.** `https://drdev.dekhohatke.com` and `/login` answer *Unauthorised* until the browser has opened a signed link from the bot (`/go/<token>`, valid **30 minutes**, made only for the super admin's / 2nd admin's chat). After that the normal username + password sign-in follows. `/seller` and `/reseller` stay public sign-in pages, no link needed. Nothing here touches `dekhohatke.com` itself: every rule above is scoped with `http.host eq "drdev…"` / `"api…"`, and the app only ever links to `drdev.` and `api.`.
+* **Telegram account + channel (Settings → Channel & account).** Add `TG_API_ID` and `TG_API_HASH` (my.telegram.org → API development tools) to Render, make sure `SECRET_KEY` is fixed, redeploy, then link the account (phone → code → 2-step password). Create a channel with that account as owner, put its @username in the channel box and save: the account adds your main bot and every reseller bot to the channel. From then on APKs / videos that admins and sellers send to the bot are copied into the channel, and reseller bots copy them from there (no re-upload, no "forwarded from", the file name stays `game.apk`). Telegram's connection is outbound from Render, so nothing changes in Cloudflare.
 
 ## Step 10 — Keep-alive (Render free tier sleeps)
 

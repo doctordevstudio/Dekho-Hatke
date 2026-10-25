@@ -32,5 +32,9 @@ services:
         sync: false
       - key: ADMIN2_CHAT_ID
         sync: false
+      - key: TG_API_ID            # my.telegram.org -> API development tools (for the linked Telegram account)
+        sync: false
+      - key: TG_API_HASH
+        sync: false
       - key: TIMEZONE
         value: Asia/Kolkata

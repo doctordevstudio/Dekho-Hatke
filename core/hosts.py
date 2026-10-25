@@ -1,7 +1,7 @@
 """Host routing + Cloudflare origin lock, as a WSGI layer that runs before Flask.
 
 Sub-domain mode (ROOT_DOMAIN set) -- Render's free plan has two custom domains, so:
-  drdev.<domain>   every panel:  admin (/ and /login, /admin/api/*), seller (/seller, /seller/api/*),
+  drdev.<domain>   every panel:  admin (/ and /login -- both "Unauthorised" without the bot's signed /go/<token> link; /admin/api/*), seller (/seller, /seller/api/*),
                    reseller (/reseller, /reseller/api/*), plus /static and /media
   api.<domain>     the license verification API only (/api/v1/*)
   anything else    (the raw xxxx.onrender.com address): ONLY Telegram's webhooks (/telegram/*) and /healthz
@@ -22,7 +22,7 @@ OPEN_PATHS = ("/healthz",)  # keep-alive pings and Render's health check never n
 STATIC = ("/static/", "/media/")
 RULES = {
     "panel": {"exact": {"/", "/login", "/seller", "/reseller", "/reseller/logout", "/favicon.ico", "/robots.txt"},
-              "prefix": ("/admin/api/", "/seller/api/", "/reseller/api/") + STATIC},
+              "prefix": ("/go/", "/admin/api/", "/seller/api/", "/reseller/api/") + STATIC},
     "api": {"exact": {"/robots.txt"}, "prefix": ("/api/v1/",)},
 }
 

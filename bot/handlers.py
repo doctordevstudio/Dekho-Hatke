@@ -15,10 +15,10 @@ from config import Config
 from bot.antispam import spam
 from bot.context import MAIN
 from bot.tg import EFFECT_PARTY, TelegramError
-from core import db, utils
+from core import admin_gate, db, utils
 from core.audit import log_action
 from core.errors import ApiError
-from services import bans, catalog, delivery, media, notify, payments, referral, resellers, rewards, sellers, settings, tgfiles, users, wallet, wheel
+from services import bans, catalog, delivery, media, notify, payments, referral, resellers, rewards, sellers, settings, tgchannel, tgfiles, users, wallet, wheel
 from services import licenses as lic_svc
 
 log = logging.getLogger("bot")
@@ -1018,6 +1018,7 @@ ADMIN_HELP = (
     "/pending — total pending payments grouped by UPI id\n\n"
     "/block <code>chat_id</code> — block a user. I ask for the <b>reason</b>; a blocked user gets <b>no reply at all</b>\n"
     "/unblock <code>chat_id</code> — let them back in\n/blocked — list blocked users\n\n"
+    "/adminlogin — a private sign-in link for the admin panel (valid 30 minutes). Also in the ≡ menu.\n\n"
     "/cancel — stop what you are doing\n\n"
     "📎 <b>File IDs:</b> send me any photo, video, APK or file and I reply with its <b>file id</b> — paste it in the "
     "panel (Apps → Video ID / Setup video ID / App (APK) ID, or Seller → Submissions).\n\n"
@@ -1029,6 +1030,16 @@ def admin_command(ctx, user, cmd, text, msg):
     uid = user["chat_id"]
     if cmd == "/help":
         send(ctx, uid, ADMIN_HELP)
+        return True
+    if cmd == "/adminlogin":
+        if not Config.ADMIN_GATE:
+            send(ctx, uid, "The admin panel sign-in page is open (ADMIN_GATE is off on this server).")
+            return True
+        link = admin_gate.link_for(uid)
+        send(ctx, uid, "🔐 <b>Admin login</b>\n" + m.LINE + f"\n\nTap the button to open the sign-in page. The link works for "
+             f"<b>{Config.ADMIN_LINK_MINUTES} minutes</b> and is only for you — don't forward it.",
+             m.kb([("🔐 Open admin login", f"url:{link}")]))
+        log_action("auth.entrance_link_issued", "", source="telegram", actor=f"admin:{uid}", role="admin")
         return True
     if cmd == "/send":
         parts = text.split(maxsplit=2)
@@ -1186,14 +1197,31 @@ def media_file_id(ctx, uid, msg, admin):
         if why:
             send(ctx, uid, f"⚠️ {m.esc(why)}")
             return True
+    stored = ""
     if ctx.is_main:
         tgfiles.register(uid, role, kind, fid, name, size, mime)
+        stored = _store_in_channel(ctx, uid, msg, role, kind, fid, name)
     hint = (SELLER_HINTS if role == "seller" else ADMIN_HINTS).get(kind, "")
     label = tgfiles.LABEL.get(kind, "File")
     send(ctx, uid, f"📎 <b>{label} id</b>\n{m.LINE}\n\n<code>{fid}</code>\n\n👆 Tap to copy. Only you can see and use this id."
          + (f"\nPaste it in {hint}." if hint else "")
-         + (f"\n📦 {m.esc(name)} · {size / 1048576:.1f} MB" if size else f"\n📦 {m.esc(name)}"))
+         + (f"\n📦 {m.esc(name)} · {size / 1048576:.1f} MB" if size else f"\n📦 {m.esc(name)}") + stored)
     return True
+
+
+def _store_in_channel(ctx, uid, msg, role, kind, fid, name):
+    """Copy the file into the storage channel (so every reseller bot can deliver it without uploading it again).
+    Returns a line for the sender; admins are told when a seller's file could not be stored."""
+    if kind not in tgchannel.MIRROR_KINDS or not tgchannel.enabled():
+        return ""
+    ok, why = tgchannel.mirror_upload(ctx.tg, uid, msg["message_id"], fid)
+    if ok:
+        return "\n☁️ Saved to the storage channel." if role == "admin" else ""
+    log.warning("channel copy of %s failed: %s", fid[:12], why)
+    if role == "seller":
+        notify.to_admins(f"⚠️ A seller's file <b>{m.esc(name)}</b> could not be copied to the storage channel: {m.esc(why)}")
+        return "\n⚠️ Saved, but the admin has to check the storage channel before resellers can deliver it."
+    return f"\n⚠️ Could not copy it to the storage channel: {m.esc(why)}"
 
 
 # ================================================================== dispatch
@@ -1231,6 +1259,11 @@ def on_start(ctx, user, frm, text):
     if arg.startswith("ref_") and arg[4:].isdigit() and user.get("_new"):
         db.set(f"/pending_ref/{skey(ctx, uid)}", arg[4:])
     menu_hint(ctx, uid)
+    if ctx.is_main and is_admin_chat(uid):
+        try:  # the ≡ menu of an admin: /start + Admin Login
+            ctx.tg.set_commands(ctx.tg.ADMIN_MENU, chat_id=uid)
+        except TelegramError:
+            pass
     if gate(ctx, uid):
         finish_onboarding(ctx, uid, user)
         show_home(ctx, uid, user)
@@ -1346,7 +1379,7 @@ def on_message(ctx, msg):
     if cmd == "/cancel":
         clear_state(ctx, uid)
         return send(ctx, uid, "Cancelled. Use the menu below to continue.", kbd(ctx, uid))
-    if admin and cmd in ("/help", "/send", "/broadcast", "/pending", "/block", "/unblock", "/blocked"):
+    if admin and cmd in ("/help", "/send", "/broadcast", "/pending", "/block", "/unblock", "/blocked", "/adminlogin"):
         clear_state(ctx, uid)
         return admin_command(ctx, user, cmd, text, msg)
 

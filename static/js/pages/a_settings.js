@@ -4,7 +4,7 @@ import { $, api, confirmBox, empty, esc, fld, fmtDate, fmtNum, isSuper, openModa
 export default async function (root) {
   let tab = 'bot';
   root.innerHTML = `<div class="page-head"><div><h1>⚙️ Settings</h1><p>Bot, maintenance, force-join channels, messages, wallet and admins.</p></div></div><div id="tb"></div><div id="main" class="gap-top">${skeleton(3)}</div>`;
-  const TABS = [['bot', '🤖 Bot'], ['features', '🎛 Features'], ['maint', '🛠 Maintenance'], ['join', '📢 Force join'], ['msgs', '💬 Messages'], ['wallet', '👛 Wallet'], ['admins', '🛡 Admins & security']];
+  const TABS = [['bot', '🤖 Bot'], ['features', '🎛 Features'], ['maint', '🛠 Maintenance'], ['join', '📢 Force join'], ['msgs', '💬 Messages'], ['wallet', '👛 Wallet'], ['tg', '📡 Channel & account'], ['admins', '🛡 Admins & security']];
   $('#tb', root).appendChild(tabsBar(TABS, tab, (k) => { tab = k; draw(); }).el);
   const box = () => $('#main', root);
   const save = async (fn, ok = 'Saved ✨') => { try { await fn(); toast(ok); } catch (e) { toast(e.message, 'err'); } };
@@ -12,7 +12,7 @@ export default async function (root) {
   async function draw() {
     box().innerHTML = skeleton(3);
     const s = await api('/settings');
-    ({ bot, features, maint, join, msgs, wallet, admins }[tab])(s);
+    ({ bot, features, maint, join, msgs, wallet, tg, admins }[tab])(s);
   }
 
   function bot(s) {
@@ -85,6 +85,41 @@ export default async function (root) {
   function wallet(s) {
     box().innerHTML = `<div class="card stack"><h3>👛 Wallet limits</h3><form id="wf" class="two">${fld('Minimum deposit ₹', `<input name="min_deposit" type="number" min="1" value="${s.wallet.min_deposit}" required>`)}${fld('Minimum withdraw ₹ (Refer money)', `<input name="min_withdraw" type="number" min="1" value="${s.wallet.min_withdraw}" required>`)}<div><button class="btn primary w-only">Save</button></div></form></div>`;
     $('#wf', root).onsubmit = (e) => { e.preventDefault(); save(() => api('/wallet/settings', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) })); };
+  }
+
+  function botList(bots) {
+    return bots && bots.length ? `<div class="list gap-top">${bots.map((b) => `<div class="li"><div class="avatar">${b.ok ? '✅' : '⚠️'}</div><div class="meta"><b>${esc(b.bot)}</b><small>${esc(b.note)}</small></div></div>`).join('')}</div>` : '';
+  }
+
+  function tg(s) {
+    const t = s.tg, ch = t.channel;
+    const acct = !t.configured
+      ? `<p class="muted">Not available yet: add <span class="mono">TG_API_ID</span> and <span class="mono">TG_API_HASH</span> (from my.telegram.org → API development tools) to the server environment, then redeploy.</p>`
+      : t.linked
+        ? `<div class="row between"><span class="badge ok">✅ Account linked</span>${isSuper() ? '<button class="btn danger sm" id="ul">Unlink account</button>' : '<span class="tiny muted">Only the Super Admin can unlink it.</span>'}</div>
+           <p class="tiny muted">The account stays linked after redeploys. Its number and login details are never shown here.</p>`
+        : `${t.expired ? '<p class="badge warn">⚠️ The link expired (the account was logged out from Telegram). Link it again.</p>' : ''}
+           <div id="stp" class="stack">${t.step === 'password'
+             ? fld('2-step verification password', '<input id="pw2" type="password" autocomplete="off" maxlength="128">', 'This account has a cloud password.') + '<div class="row"><button class="btn primary w-only" id="go-pw">Confirm password</button><button class="btn" id="cx">Cancel</button></div>'
+             : t.step === 'code'
+               ? fld('Login code', '<input id="cd" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="12345">', 'Telegram sent it to the account (check its Telegram app).') + '<div class="row"><button class="btn primary w-only" id="go-cd">Confirm code</button><button class="btn" id="cx">Cancel</button></div>'
+               : fld('Phone number of the account', '<input id="ph" type="tel" autocomplete="off" maxlength="20" placeholder="+919876543210">', 'Use the international format. It is used for this login only and is not saved.') + '<div class="row"><button class="btn primary w-only" id="go-ph">Send login code</button></div>'}</div>`;
+    box().innerHTML = `<div class="card stack"><h3>👤 Personal Telegram account</h3>
+      <p class="muted tiny">Link the account that owns the storage channel. It puts every bot (yours and each reseller’s) into the channel so the bots can copy APKs and videos from it — nothing is downloaded or uploaded again, and the file keeps its name.</p>${acct}</div>
+      <div class="card stack gap-top"><h3>📦 Storage channel</h3>
+      <p class="muted tiny">Every APK and video that an admin or a seller sends to the bot is copied here once. Customers of any bot then get it copied from this channel (no “forwarded from” label). Use a channel or supergroup the linked account owns.</p>
+      ${ch ? `<p><span class="badge ok">✅ ${esc(ch.title || ch.chat_id)}</span> <span class="tiny muted mono">${esc(ch.username ? '@' + ch.username : ch.chat_id)}</span></p>` : '<p class="tiny muted">No channel set: files are not copied and reseller bots use the old (slower) way.</p>'}
+      ${fld('Channel @username, link or chat id', `<input id="chn" maxlength="120" value="${esc(ch ? (ch.username ? '@' + ch.username : ch.chat_id) : '')}" placeholder="@mystorage  or  -1001234567890" ${t.linked ? '' : 'disabled'}>`, 'Leave empty and save to stop using a channel.')}
+      <div class="row"><button class="btn primary w-only" id="sc" ${t.linked ? '' : 'disabled'}>Save channel</button>${ch ? '<button class="btn w-only" id="sy">🔄 Re-check bot access</button>' : ''}</div><div id="tgres"></div></div>`;
+    const act = (path, body, ok, after) => save(async () => { const d = await api(path, { method: 'POST', body }); if (after) after(d); else draw(); }, ok);
+    const on = (id, fn) => { const el = $(id, root); if (el) el.onclick = fn; };
+    on('#go-ph', () => act('/tg-account/start', { phone: $('#ph', root).value }, 'Code sent ✉️'));
+    on('#go-cd', () => act('/tg-account/code', { code: $('#cd', root).value }, 'Checked', (d) => { if (d.result === 'done') toast('Account linked ✅'); draw(); }));
+    on('#go-pw', () => act('/tg-account/password', { password: $('#pw2', root).value }, 'Account linked ✅'));
+    on('#cx', () => act('/tg-account/cancel', {}, 'Cancelled'));
+    on('#ul', async () => { if (await confirmBox('Unlink the account?', 'The saved session is deleted and logged out. Bots already in the channel stay there, but new bots cannot be added until you link again.', 'Unlink')) act('/tg-account/unlink', {}, 'Unlinked'); });
+    on('#sc', () => save(async () => { const d = await api('/tg-channel', { method: 'PUT', body: { chat: $('#chn', root).value } }); await draw(); const r = $('#tgres', root); if (r) r.innerHTML = botList(d.bots) + (d.bots && d.bots.length && !d.admin ? '<p class="tiny muted">The account is not an admin there, so it may not be able to add bots.</p>' : ''); }, 'Channel saved ✨'));
+    on('#sy', () => save(async () => { const d = await api('/tg-channel/sync', { method: 'POST' }); $('#tgres', root).innerHTML = botList(d.bots); }, 'Checked'));
   }
 
   async function admins(s) {

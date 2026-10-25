@@ -49,8 +49,17 @@ class Config:
     FIREBASE_CREDENTIALS_FILE = os.getenv("FIREBASE_CREDENTIALS_FILE", "serviceAccountKey.json")
     USE_MEMORY_DB = _flag("USE_MEMORY_DB", False)  # local testing only
 
+    # ---- admin entrance ----
+    # The admin / super-admin sign-in page is invisible ("Unauthorised") unless the visitor came through a signed link that the
+    # bot hands out (menu -> Admin Login). The link works for ADMIN_LINK_MINUTES. ADMIN_GATE=0 turns this off (local dev only).
+    ADMIN_GATE = _flag("ADMIN_GATE", True)
+    ADMIN_LINK_MINUTES = _int("ADMIN_LINK_MINUTES", 30)
+
     # ---- telegram ----
     BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+    # my.telegram.org -> API development tools. Needed only for linking a personal account (Settings -> Channel & account).
+    TG_API_ID = _int("TG_API_ID", _int("API_ID", 0))
+    TG_API_HASH = (os.getenv("TG_API_HASH") or os.getenv("API_HASH") or "").strip()
     ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")  # can also be set from the panel
     # ---- domain / Cloudflare (two custom domains: Render's free plan allows two) ----
     # ROOT_DOMAIN=dekhohatke.com turns it on:

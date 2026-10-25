@@ -34,7 +34,14 @@ ok(Config.panel_url("seller") == "http://drdev.dekhohatke.com/seller" and Config
 # ---------------------------------------------------------------- origin lock on the two custom domains
 ok(NF(req(PANEL, "/login", secret=None)), "panel host without the secret header -> 404")
 ok(NF(req(PANEL, "/login", secret="wrong")), "panel host with a wrong secret -> 404")
-ok(req(PANEL, "/login").status_code == 200, "panel host with the secret -> admin login page")
+from core import admin_gate  # noqa: E402
+r = req(PANEL, "/")
+ok(r.status_code == 401 and "Unauthorised" in r.get_data(as_text=True), "drdev. opened directly -> Unauthorised")
+ok(req(PANEL, "/login").status_code == 401, "drdev./login without the bot's link -> Unauthorised")
+ok(NF(req(PANEL, f"/go/{admin_gate.make_token(999)}", secret=None)), "the entrance link without the origin secret -> 404 (Cloudflare lock first)")
+ok(NF(req(API, f"/go/{admin_gate.make_token(999)}")) and NF(req(RENDER, f"/go/{admin_gate.make_token(999)}", secret=None)), "the entrance link exists on the panel host only")
+ok(req(PANEL, f"/go/{admin_gate.make_token(999)}").status_code == 302, "the bot's signed link unlocks the sign-in page")
+ok(req(PANEL, "/login").status_code == 200, "panel host with the secret + link -> admin login page")
 ok(NF(req(API, "/api/v1/app_000000000000/verify", method="post", secret=None, json={})), "api host without the secret -> 404")
 ok(req(RENDER, "/healthz", secret=None).get_data(as_text=True) == "ok", "/healthz works on the Render address (health check / keep-alive)")
 for path in ("/login", "/", "/seller", "/reseller", "/admin/api/me", "/api/v1/app_000000000000/verify", "/static/css/app.css"):
@@ -70,7 +77,7 @@ t = req(PANEL, "/reseller").get_data(as_text=True)
 ok('action="/reseller"' in t and "Reseller panel" in t, "drdev./reseller = reseller sign-in")
 ok(req(PANEL, "/seller/api/me").status_code == 401 and req(PANEL, "/reseller/api/me").status_code == 401 and req(PANEL, "/admin/api/me").status_code == 401, "all three panel APIs live on drdev.")
 ok(req(PANEL, "/static/css/app.css").status_code == 200 and req(PANEL, "/static/css/app.css").headers.get("Cache-Control", "").startswith("public"), "static files served and edge-cacheable")
-for path in ("/api/v1/app_000000000000/verify", "/reseller/logout/x", "/.env", "/admin"):
+for path in ("/api/v1/app_000000000000/verify", "/reseller/logout/x", "/.env", "/admin", "/go", "/go/"):
     ok(NF(req(PANEL, path)), f"drdev.{path} -> plain 404")
 r = req(PANEL, "/reseller", method="post", data={"username": "nobody", "password": "wrong-password-1", "csrf_token": t.split('name="csrf_token" value="')[1].split('"')[0]})
 ok(r.status_code == 401 and "Invalid username or password" in r.get_data(as_text=True), "reseller login POST is handled")
@@ -98,6 +105,7 @@ ok(all(a["endpoint"].startswith("http://api.dekhohatke.com/api/v1/") for a in ap
 # ---------------------------------------------------------------- real client IP comes from CF-Connecting-IP (only with the secret)
 def anon_login(user, **kw):
     cl = app.test_client()  # fresh cookie jar -> its own CSRF token
+    cl.get(f"/go/{admin_gate.make_token(999)}", base_url=f"http://{PANEL}", headers={"X-Origin-Auth": SECRET})
     t = cl.get("/login", base_url=f"http://{PANEL}", headers={"X-Origin-Auth": SECRET}).get_data(as_text=True)
     tok = t.split('name="csrf_token" value="')[1].split('"')[0]
     hd = {"X-Origin-Auth": SECRET, **kw.pop("headers", {})}

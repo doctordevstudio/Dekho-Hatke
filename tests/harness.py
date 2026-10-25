@@ -55,6 +55,8 @@ def fake_call(self, method, payload=None, files=None, timeout=20):
         return {"message_id": _mid[0], "document": {"file_id": f"DOCID{_mid[0]:05d}XXXXXXXXXX"}}
     if method == "sendVideo":
         return {"message_id": _mid[0], "video": {"file_id": f"VIDID{_mid[0]:05d}XXXXXXXXXX"}}
+    if method == "copyMessage":
+        return {"message_id": _mid[0]}
     if method == "getMe":
         return {"id": 1, "username": "main_bot" if self.token == os.environ["BOT_TOKEN"] else "reseller_bot", "first_name": "Bot"}
     if method == "getChat":
@@ -137,7 +139,10 @@ def cbq(uid, data, name="Rahul", mid=7):
 
 
 def login_admin(app, user="boss", pw="TestPassw0rd123"):
+    from core import admin_gate
     c = app.test_client()
+    assert c.get("/login").status_code == 401, "the sign-in page must be hidden without the bot's link"
+    assert c.get(f"/go/{admin_gate.make_token(999)}").status_code == 302  # the link the bot hands the admin
     page = c.get("/login").get_data(as_text=True)
     csrf = page.split('name="csrf_token" value="')[1].split('"')[0]
     r = c.post("/login", data={"username": user, "password": pw, "csrf_token": csrf})

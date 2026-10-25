@@ -237,6 +237,8 @@ def register_webhook(r):
     client = client_for(r["bot_token"])
     client.set_webhook(f"{Config.BASE_URL}/telegram/{Config.path_secret(r['id'])}/{r['id']}", Config.header_secret(r["id"]))
     client.set_start_menu()  # the ≡ menu shows only /start
+    from services import tgchannel
+    tgchannel.grant_in_background(client)  # the linked account puts this bot into the storage channel
     return True
 
 

@@ -3,6 +3,7 @@
     ".read": false,
     ".write": false,
     "tg_files": { ".indexOn": ["owner"] },
+    "private": { ".read": false, ".write": false },
     "txns": { ".indexOn": ["status", "user_id", "created_at", "reseller_id", "upi_record_id"] },
     "earnings": { ".indexOn": ["ts", "app_id", "reseller_id"] },
     "upi_ledger": { ".indexOn": ["ts", "reseller_id"] },

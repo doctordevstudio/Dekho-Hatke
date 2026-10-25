@@ -3,7 +3,7 @@ import time
 from flask import Blueprint, current_app, g, make_response, redirect, render_template, request, send_from_directory, session
 
 from config import Config
-from core import db, security, utils
+from core import admin_gate as gate, db, security, utils
 from core.audit import log_action
 
 pages = Blueprint("pages", __name__)
@@ -26,6 +26,15 @@ def _login_page(error=None, status=200, panel="admin"):
                                                   panel_key=panel, action=Config.panel_login(panel)), status))
 
 
+def _unauthorised():
+    """What anybody sees at the admin address without a valid entrance link: nothing but a 401."""
+    html = ("<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+            "<meta name=robots content='noindex,nofollow'><title>Unauthorised</title>"
+            "<body style='margin:0;min-height:100vh;display:grid;place-items:center;background:#000;color:#8a8f98;"
+            "font:600 18px system-ui,sans-serif;letter-spacing:.02em'>Unauthorised</body></html>")
+    return _nocache(make_response(html, 401))
+
+
 def _shell(panel):
     return _nocache(make_response(render_template("app.html", panel=PANELS[panel], panel_key=panel,
                                                   home=Config.panel_home(panel), login=Config.panel_login(panel))))
@@ -34,8 +43,20 @@ def _shell(panel):
 @pages.get("/")
 def index():
     if not security.current_admin():
-        return redirect("/login")
+        return _unauthorised()  # opening the panel address directly never reveals a sign-in form
     return _shell("admin")
+
+
+@pages.get("/go/<token>")
+def admin_entrance(token):
+    """The signed link from the bot's "Admin Login" menu item: unlocks the sign-in page for this browser."""
+    ok, _ = security.limiter.hit(f"gate:{security.client_ip()}", 20, 60)
+    found = gate.check_token(token) if ok else None
+    if not found:
+        return _unauthorised()
+    gate.unlock(found[1])
+    log_action("auth.entrance_link_used", "", source="panel", actor=f"admin-chat:{found[0]}")
+    return redirect("/login")
 
 
 # ------------------------------------------------------------------ reseller panel
@@ -99,8 +120,10 @@ def login():
     if request.method == "GET":
         if security.current_admin():
             return redirect("/")
-        return _login_page()
+        return _login_page() if gate.unlocked() else _unauthorised()
 
+    if not gate.unlocked():
+        return _unauthorised()
     ip = security.client_ip()
     if not security.csrf_valid(request.form.get("csrf_token")):
         return _login_page("Session expired. Please try again.", 400)

@@ -184,21 +184,29 @@ class Telegram:
         return self.call("setMyCommands", payload, timeout=10)
 
     START_ONLY = [("start", "Start the bot")]
+    ADMIN_MENU = [("start", "Start the bot"), ("adminlogin", "🔐 Admin Login")]
 
     def set_start_menu(self, admin_chats=()):
-        """The ≡ menu button shows ONLY /start (for everybody, admins included): default scope = /start,
-        and any per-chat command lists left over from older versions are removed. Never raises."""
+        """The ≡ menu button: everybody sees /start; the super admin and the 2nd admin (private chats with the main bot)
+        also get "Admin Login". Never raises."""
         try:
             self.call("setMyCommands", {"commands": [{"command": c, "description": d} for c, d in self.START_ONLY]}, timeout=10)
             for chat in admin_chats:
                 try:
-                    self.call("deleteMyCommands", {"scope": {"type": "chat", "chat_id": int(chat)}}, timeout=10)
+                    self.set_commands(self.ADMIN_MENU, chat_id=chat)
                 except (TelegramError, ValueError):
-                    pass
+                    pass  # that admin has not opened the bot yet; /start sets it up
             self.call("setChatMenuButton", {"menu_button": {"type": "commands"}}, timeout=10)
             return True
         except TelegramError:
             return False
+
+    def drop_admin_menu(self, chat):
+        """Take "Admin Login" away from a chat that is no longer an admin chat."""
+        try:
+            self.call("deleteMyCommands", {"scope": {"type": "chat", "chat_id": int(chat)}}, timeout=10)
+        except (TelegramError, ValueError):
+            pass
 
     def webhook_info(self):
         return self.call("getWebhookInfo", timeout=10)

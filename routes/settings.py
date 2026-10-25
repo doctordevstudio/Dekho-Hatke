@@ -19,6 +19,11 @@ def webhook_url():
     return f"{base}/telegram/{Config.path_secret('')}"
 
 
+def _tg_state():
+    from .tgaccount import tg_state
+    return tg_state()
+
+
 @bp.get("/settings")
 def get_settings():
     names = {a["id"]: a["name"] for a in db.get_list("/apps") if not a.get("deleted")}
@@ -29,7 +34,7 @@ def get_settings():
                    bot_configured=bool(Config.BOT_TOKEN), webhook_url_host=Config.BASE_URL or request.url_root.rstrip("/"),
                    messages={k: svc.get_rich(k) for k in MESSAGE_KEYS}, wallet=wallet.settings(),
                    rewards={k: rewards.settings(k) for k in rewards.KINDS}, seller=sellers.settings(),
-                   admin2_configured=bool(Config.ADMIN2_USERNAME), role=g.admin["role"], features=svc.features())
+                   admin2_configured=bool(Config.ADMIN2_USERNAME), role=g.admin["role"], features=svc.features(), tg=_tg_state())
 
 
 @bp.put("/settings/features")
@@ -43,7 +48,9 @@ def save_features():
 
 @bp.put("/settings/bot")
 def save_bot():
+    before = notify.admin_chats()
     svc.save_bot_settings(body())
+    notify.refresh_admin_menus(before)  # "Admin Login" in the bot menu follows the admin chat ids
     log_action("settings.bot_saved", "welcome / support / admin chat")
     return jsonify(ok=True)
 

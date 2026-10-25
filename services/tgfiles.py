@@ -66,6 +66,8 @@ def register(owner, role, kind, file_id, name, size, mime):
     rec = {"id": _key(owner, file_id), "owner": owner, "role": role, "file_id": file_id, "kind": kind,
            "name": str(name)[:80], "size": int(size or 0), "mime": mime or "", "ts": utils.now()}
     db.set(f"/tg_files/{rec['id']}", rec)
+    from services import tgchannel
+    tgchannel.remember(file_id, kind, name, size, mime)  # by file id: delivery needs the real name and the channel copy
     rows = mine(owner, limit=10_000)
     for old in rows[KEEP:]:
         db.set(f"/tg_files/{old['id']}", None)

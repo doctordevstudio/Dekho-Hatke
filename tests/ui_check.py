@@ -103,7 +103,8 @@ with sync_playwright() as p:
         # ---------------- admin
         ctx = b.new_context(viewport=vp)
         page = run(label, ctx, ADMIN, "admin")
-        page.goto("http://127.0.0.1:5055/login")
+        from core import admin_gate
+        page.goto("http://127.0.0.1:5055/go/" + admin_gate.make_token(999))  # the bot's "Admin Login" link
         page.fill("input[name=username]", "boss"); page.fill("input[name=password]", "TestPassw0rd123"); page.click("button[type=submit]")
         page.wait_for_selector("#meName:not(:has-text('…'))", timeout=8000)
         sweep(page, label, "admin", ADMIN)
