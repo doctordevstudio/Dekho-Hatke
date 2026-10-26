@@ -82,7 +82,7 @@ ok(flat[:3] == [f"pl:{PL[300]}", f"pl:{PL[150]}", f"pl:{PL[50]}"], f"bot plan bu
 n = [0]
 def buy(uid, plan, name="Rahul"):
     n[0] += 1; h.tgmod.Telegram.download = lambda self, fid, k=n[0]: (png(color=(k * 7 % 255, k * 13 % 255, 90)), "png")
-    P(cbq(uid, f"pc:{plan}", name)); P(cbq(uid, f"pw:{plan}:0", name)); P(cbq(uid, f"by:{plan}:0", name))
+    P(cbq(uid, f"pc:{plan}", name)); P(cbq(uid, f"py:{plan}", name)); P(cbq(uid, f"by:{plan}:0", name))
     t = sorted([x for x in db.query_equal("/txns", "status", "pending") if str(x["user_id"]) == str(uid)], key=lambda x: -x["created_at"])[0]
     P(cbq(uid, f"paid:{t['id']}", name)); P(msg(uid, photo=f"SHOT{utils.ts_id()[-10:]}", name=name)); P(msg(uid, str(100000000000 + int(time.time() * 1000) % 899999999999), name=name))
     return t["id"]
@@ -314,9 +314,9 @@ ok(not got_any("New user started the bot", 4242), "reseller bot: the reseller is
 
 # ------------------------------------------------------------------ reseller bot purchases show up in the reseller column
 t = None
-P(cbq(7100, f"pc:{p300}", "Rob"), rctx); P(cbq(7100, f"pw:{p300}:0", "Rob"), rctx)
+P(cbq(7100, f"pc:{p300}", "Rob"), rctx); P(cbq(7100, f"py:{p300}", "Rob"), rctx)
 j(rc.post("/reseller/api/upis", data={"name": "R", "upi_id": "rita@upi", "telegram_chat_id": "4243", "scanner": (io.BytesIO(PNG), "q.png")}, headers=RH, content_type="multipart/form-data"))
-P(cbq(7100, f"pc:{p300}", "Rob"), rctx); P(cbq(7100, f"pw:{p300}:0", "Rob"), rctx); P(cbq(7100, f"by:{p300}:0", "Rob"), rctx)
+P(cbq(7100, f"pc:{p300}", "Rob"), rctx); P(cbq(7100, f"py:{p300}", "Rob"), rctx); P(cbq(7100, f"by:{p300}:0", "Rob"), rctx)
 t = [x for x in db.query_equal("/txns", "status", "pending") if x.get("reseller_id") == RID][0]
 n[0] += 1; h.tgmod.Telegram.download = lambda self, fid, k=n[0] + 900: (png(color=(k * 7 % 255, k * 13 % 255, 90)), "png")
 P(cbq(7100, f"paid:{t['id']}", "Rob"), rctx); P(msg(7100, photo="RSHOT7100", name="Rob"), rctx); P(msg(7100, "900000007100", name="Rob"), rctx)

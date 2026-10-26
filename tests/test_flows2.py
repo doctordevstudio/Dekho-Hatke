@@ -34,7 +34,7 @@ _seq = itertools.count(1)
 def buy(uid, plan, name="Rahul", wallet_flag=0):
     n = next(_seq); h.tgmod.Telegram.download = lambda self, fid, n=n: (png(color=(n * 7 % 255, n * 13 % 255, 90)), "png")
     handlers.process_update(cbq(uid, f"pc:{plan}", name))
-    handlers.process_update(cbq(uid, f"pw:{plan}:0", name))
+    handlers.process_update(cbq(uid, f"py:{plan}", name))
     handlers.process_update(cbq(uid, f"by:{plan}:{wallet_flag}", name))
     t = sorted(db.query_equal("/txns", "status", "pending"), key=lambda t: -t["created_at"])[0]
     handlers.process_update(cbq(uid, f"paid:{t['id']}", name))
@@ -171,7 +171,7 @@ ok(rctx is not None and rctx.tenant == RID, "reseller bot context resolves")
 # reseller bot purchase -> price is the raised price, commission recorded
 from bot.tg import client_for
 def rbuy(uid, plan):
-    handlers.process_update(cbq(uid, f"pc:{plan}", "Rob"), rctx); handlers.process_update(cbq(uid, f"pw:{plan}:0", "Rob"), rctx); handlers.process_update(cbq(uid, f"by:{plan}:0", "Rob"), rctx)
+    handlers.process_update(cbq(uid, f"pc:{plan}", "Rob"), rctx); handlers.process_update(cbq(uid, f"py:{plan}", "Rob"), rctx); handlers.process_update(cbq(uid, f"by:{plan}:0", "Rob"), rctx)
     t = [x for x in db.query_equal("/txns", "status", "pending") if x.get("reseller_id") == RID][0]
     n = next(_seq) + 500; h.tgmod.Telegram.download = lambda self, fid, n=n: (png(color=(n * 7 % 255, n * 13 % 255, 90)), "png")
     handlers.process_update(cbq(uid, f"paid:{t['id']}", "Rob"), rctx); handlers.process_update(msg(uid, photo=f"RSHOT{uid}", name="Rob"), rctx); handlers.process_update(msg(uid, str(900000000000 + uid), name="Rob"), rctx)

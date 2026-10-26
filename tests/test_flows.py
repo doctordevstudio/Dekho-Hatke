@@ -54,8 +54,7 @@ ok(len(again) == 1 and again[0][3] is None and again[0][1].get("photo"), "next /
 h.CALLS.clear()
 plan = [p for p in db.get_list("/plans") if p["amount"] == 199][0]
 handlers.process_update(cbq(U, f"pc:{plan['id']}"))
-handlers.process_update(cbq(U, f"pw:{plan['id']}:0"))
-handlers.process_update(cbq(U, f"by:{plan['id']}:0"))
+handlers.process_update(cbq(U, f"py:{plan['id']}"))   # plan tapped -> confirmation -> Yes -> (no wallet) UPI card
 pend = db.query_equal("/txns", "status", "pending")
 ok(len(pend) == 1, "txn created")
 photos = [x for x in h.CALLS if x[0] == "sendPhoto" and str(x[1].get("chat_id")) == str(U)]

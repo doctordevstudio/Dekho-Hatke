@@ -73,7 +73,7 @@ def prices():
         plans = []
         has_trial = any(p["app_id"] == a["id"] and p.get("kind") == "trial" for p in catalog.live("/plans"))
         for p in catalog.live("/plans"):
-            if p["app_id"] != a["id"] or p.get("kind") == "trial":
+            if p["app_id"] != a["id"] or p.get("kind") in ("trial", "short"):
                 continue
             ov = mine.get(p["id"]) or {}
             plans.append({"id": p["id"], "label": utils.validity_label(p["validity_value"], p["validity_unit"]),
@@ -118,7 +118,7 @@ def set_trial(app_id):
 def set_price(plan_id):
     d = body()
     plan = catalog.get_plan(plan_id)
-    if not plan or plan.get("kind") == "trial":
+    if not plan or plan.get("kind") in ("trial", "short"):
         raise ApiError("Plan not found.", 404)
     resellers.set_price(g.reseller["id"], plan, d.get("price"), d.get("enabled", True))
     _log("price_set", f"{plan_id} → {d.get('price')}", plan_id)

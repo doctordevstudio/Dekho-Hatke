@@ -131,7 +131,7 @@ def tenant():
 
 ADMIN_MODULES = ["admins", "apps", "auth_api", "earnings", "licenses", "logs", "plans", "settings", "upi", "users",
                  "categories", "balance", "rewards", "referral", "leaderboard", "broadcast", "resellers", "sellers_admin",
-                 "uploads", "files", "tgaccount"]
+                 "uploads", "files", "tgaccount", "shorteners"]
 RESELLER_MODULES = ["reseller_panel"]
 SELLER_MODULES = ["seller_panel"]
 for _m in ADMIN_MODULES + RESELLER_MODULES + SELLER_MODULES:

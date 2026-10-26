@@ -6,10 +6,10 @@ const split = (main, res) => `<span class="badge info" title="Admin bot">🤖 ${
 export default async function (root) {
   root.innerHTML = `<div class="page-head"><div><h1>🏷️ Plans</h1><p>Choose an app to see its plans. 🤖 = sold by the admin bot · 🏪 = sold by reseller bots.</p></div><button class="btn primary w-only" id="add">＋ Add plan</button></div>
     <div id="tiles" class="grid auto">${skeleton(1)}</div><div id="body"></div>`;
-  let d, apps = [], upis = [], sel = '', q = '';
+  let d, apps = [], upis = [], shorts = [], sel = '', q = '';
 
   async function load() {
-    [d, { apps }, { items: upis }] = await Promise.all([api('/plans'), api('/apps'), api('/upis')]);
+    [d, { apps }, { items: upis }, { items: shorts }] = await Promise.all([api('/plans'), api('/apps'), api('/upis'), api('/shorteners/options').catch(() => ({ items: [] }))]);
     const t = d.totals;
     $('#tiles', root).innerHTML = tileHtml('🤖 Admin bot sales', fmtNum(t.main), fmtMoney(t.amount_main), { drill: 'scope:main' })
       + tileHtml('🏪 Reseller bot sales', fmtNum(t.reseller), fmtMoney(t.amount_reseller), { drill: 'scope:reseller' })
@@ -33,8 +33,8 @@ export default async function (root) {
     const list = d.items.filter((p) => p.app_id === sel);
     $('#body', root).innerHTML = `<div class="row between gap-top"><button class="btn" id="back">← All apps</button><button class="btn sm" data-sales="">💸 All sales of this app</button></div>
       <div class="section-title"><h2>📱 ${esc(a.app_name)}</h2><div>${split(a.sold_main, a.sold_reseller)}</div></div>
-      <div class="list">${list.map((p) => `<div class="li wide ${p.disabled ? 'dim' : ''}"><div class="avatar">${p.kind === 'trial' ? '🎁' : '🏷️'}</div>
-        <div class="meta"><b><span class="badge violet" title="Sort number">#${p.sort || '–'}</span> ${p.kind === 'trial' ? 'FREE TRIAL' : fmtMoney(p.amount)} · ${esc(p.label)} ${p.is_best ? '<span class="badge ok">⭐ best value</span>' : ''}${p.disabled ? ' <span class="badge bad">hidden in bot</span>' : ''}</b><small>${split(p.sold_main, p.sold_reseller)} · ${fmtNum(p.sold)} sold${p.kind === 'trial' ? '' : ` · 🏦 ${p.upi_id ? esc(p.upi_label) : 'random UPI'}`}</small></div>
+      <div class="list">${list.map((p) => `<div class="li wide ${p.disabled ? 'dim' : ''}"><div class="avatar">${p.kind === 'trial' ? '🎁' : p.kind === 'short' ? '🔗' : '🏷️'}</div>
+        <div class="meta"><b><span class="badge violet" title="Sort number">#${p.sort || '–'}</span> ${p.kind === 'trial' ? 'FREE TRIAL' : p.kind === 'short' ? '🆓 FREE via short link' : fmtMoney(p.amount)} · ${esc(p.label)} ${p.is_best ? '<span class="badge ok">⭐ best value</span>' : ''}${p.disabled ? ' <span class="badge bad">hidden in bot</span>' : ''}</b><small>${split(p.sold_main, p.sold_reseller)} · ${fmtNum(p.sold)} sold${p.kind === 'trial' ? '' : p.kind === 'short' ? ` · 🔗 ${esc(p.shorturl_name || '(removed)')}${p.shorturl_ok ? '' : ' <span class="badge bad">shortener off / removed — hidden in bot</span>'}` : ` · 🏦 ${p.upi_id ? esc(p.upi_label) : 'random UPI'}`}</small></div>
         <div class="acts"><label class="row tiny muted w-only" title="Show this plan in the bot"><span class="switch"><input type="checkbox" data-pdis="${esc(p.id)}" ${p.disabled ? '' : 'checked'}><i></i></span> In bot</label><button class="btn sm" data-sales="${esc(p.id)}">View sales</button><button class="btn sm w-only" data-edit="${esc(p.id)}">✏️ Edit</button><button class="btn sm danger w-only del-only" data-del="${esc(p.id)}">🗑</button></div></div>`).join('') || empty('🏷️', 'No plans for this app yet.')}</div>`;
   }
 
@@ -50,19 +50,29 @@ export default async function (root) {
     });
   }
 
+  const shortOpts = (p) => {
+    const list = shorts.slice();
+    if (p.shorturl_id && !list.some((x) => x.id === p.shorturl_id)) list.push({ id: p.shorturl_id, name: (p.shorturl_name || 'removed shortener') + ' (off)', pages: 0 });
+    return list.map((x) => `<option value="${esc(x.id)}" ${x.id === p.shorturl_id ? 'selected' : ''}>🔗 ${esc(x.name)}${x.pages ? ` · ${x.pages} page${x.pages === 1 ? '' : 's'}` : ''}</option>`).join('');
+  };
   const nextSort = (appId) => 1 + Math.max(0, ...d.items.filter((x) => x.app_id === appId).map((x) => x.sort || 0));
   function form(p = {}) {
     const edit = !!p.id;
     const m = openModal({ title: edit ? 'Edit plan' : 'Add plan', body: `${edit ? '' : fld('App', `<select name="app_id">${apps.map((a) => `<option value="${esc(a.id)}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>`)}
       ${fld('Type', `<select name="kind"><option value="paid" ${p.kind !== 'trial' ? 'selected' : ''}>Paid plan</option><option value="trial" ${p.kind === 'trial' ? 'selected' : ''}>🎁 Free trial</option></select>`)}
+      <div id="shBox">${fld('Free via short link', `<select name="shorturl_id"><option value="">— None (normal paid plan) —</option>${shortOpts(p)}</select>`, 'Optional. Pick a shorturl from the Shortener page (only ones that generate license keys). The bot shows this plan as FREE: the user completes the pages and then receives the key.')}</div>
       <div class="two">${fld('Sort number *', `<input name="sort" type="number" min="1" max="999" step="1" required placeholder="1 = shown first" value="${p.sort || nextSort(p.app_id || sel || (apps[0] || {}).id)}">`, 'Plans are shown to users in this order (1 first).')}
         <div id="upiBox">${fld('UPI ID for this plan *', `<select name="upi_id"><option value="" ${!p.upi_id ? 'selected' : ''}>🎲 Random UPI (round-robin)</option>${upis.filter((u) => u.active !== false).map((u) => `<option value="${esc(u.id)}" ${u.id === p.upi_id ? 'selected' : ''}>${esc(u.name)} · ${esc(u.upi_id)}</option>`).join('')}</select>`, 'Payments for this plan go to this UPI, or rotate across all active UPIs.')}</div></div>
       <div id="amt">${fld('Price ₹ *', `<input name="amount" type="number" min="1" step="0.01" placeholder="e.g. 299" value="${p.amount || ''}">`)}</div>
       <div class="two">${fld('Validity *', `<input name="validity_value" type="number" min="1" required placeholder="e.g. 30" value="${p.validity_value || ''}">`)}${fld('Unit *', `<select name="validity_unit">${['hours', 'days', 'years'].map((u) => `<option ${u === (p.validity_unit || 'days') ? 'selected' : ''}>${u}</option>`).join('')}</select>`)}</div>
       <label class="row"><span class="switch"><input type="checkbox" name="is_best" ${p.is_best ? 'checked' : ''}><i></i></span> ⭐ Highlight as best value</label>`,
       onSubmit: async (v, f) => { await api(edit ? `/plans/${p.id}` : '/plans', { method: edit ? 'PATCH' : 'POST', body: { ...v, is_best: f.elements.is_best.checked } }); toast('Saved ✨'); load(); } });
-    const sync = () => { const t = m.form.elements.kind.value === 'trial'; $('#amt', m.el).hidden = t; $('#upiBox', m.el).hidden = t; };
-    m.form.elements.kind.addEventListener('change', sync); sync();
+    const sync = () => {
+      const t = m.form.elements.kind.value === 'trial', s = !t && !!m.form.elements.shorturl_id.value;
+      $('#amt', m.el).hidden = t || s; $('#upiBox', m.el).hidden = t || s; $('#shBox', m.el).hidden = t;
+      m.form.elements.is_best.closest('label').hidden = t || s;
+    };
+    m.form.elements.kind.addEventListener('change', sync); m.form.elements.shorturl_id.addEventListener('change', sync); sync();
   }
 
   root.addEventListener('change', async (e) => {

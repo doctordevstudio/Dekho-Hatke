@@ -144,6 +144,10 @@ def quote(ctx, user, plan_id):
     price, enabled = catalog.price_for(plan, ctx.tenant)
     if not enabled:
         return None
+    if plan.get("kind") == "short":
+        from services import shortener
+        if ctx.tenant or not shortener.plan_ready(plan):
+            return None
     if ctx.tenant:  # a reseller can hide apps / categories / plans and switch free trials on or off for their own bot
         if plan.get("kind") == "trial" and not resellers.trial_enabled(ctx.tenant, app["id"]):
             return None
@@ -151,7 +155,12 @@ def quote(ctx, user, plan_id):
         if app["id"] in (hid.get("apps") or {}) or (app.get("category_id") or "other") in (hid.get("categories") or {}):
             return None
     bal = wallet.balance(users.scoped(user["chat_id"], ctx.tenant))
-    return {"plan": plan, "app": app, "price": price, "trial": plan.get("kind") == "trial", "wallet": bal,
+    sh = None
+    if plan.get("kind") == "short":
+        from services import shortener
+        sh = shortener.shortener(str(plan.get("shorturl_id") or ""))
+    return {"plan": plan, "app": app, "price": price, "trial": plan.get("kind") == "trial",
+            "short": plan.get("kind") == "short", "sh": sh, "wallet": bal,
             "label": utils.validity_label(plan["validity_value"], plan["validity_unit"])}
 
 
@@ -169,6 +178,8 @@ def create_license_txn(ctx, user, plan_id, use_wallet=False):
     state, open_t, mine = open_txn(ctx, user)
     if state:
         return state, open_t
+    if q["short"]:
+        return "unavailable", None  # Free (short link) plans are started with start_short, never as a payment
     if q["trial"]:
         return _claim_trial(ctx, user, suid, app, plan)
     if _daily_limit_hit(mine):
@@ -223,6 +234,32 @@ def _claim_trial(ctx, user, suid, app, plan):
                      f"📱 {m.esc(app['name'])} — {m.esc(label)}\n\n" + m.user_block(done["user"]))
     log_action("trial.claimed", f"{app['name']} / {label}", target=txn_id, source="bot", actor=f"user:{user['chat_id']}")
     return "done", done
+
+
+def issue_short_license(ctx, user, plan, txn_id, shortener_name=""):
+    """The user finished every step of a shortener: record a free order and hand over key + APK + video.
+    Safe to call again with the same txn_id (a retry never makes a second key)."""
+    old = get_txn(txn_id)
+    if old and old.get("status") == "success":
+        return old
+    app = catalog.get_app(plan["app_id"])
+    if not app:
+        raise ApiError("App not found.", 404)
+    if not old:
+        suid = users.scoped(user["chat_id"], ctx.tenant)
+        now = utils.now()
+        label = utils.validity_label(plan["validity_value"], plan["validity_unit"])
+        old = {"id": txn_id, "kind": "license", "user_id": str(user["chat_id"]), "suid": suid, "reseller_id": ctx.tenant,
+               "status": "pending", "amount": 0, "plan_price": 0, "wallet": {"total": 0}, "short": True, "via": "shorturl",
+               "shortener": shortener_name, "app_id": app["id"], "app_name": app["name"], "plan_id": plan["id"],
+               "seller_id": app.get("seller_id", ""), "plan_label": label + " (free · short link)",
+               "validity_value": plan["validity_value"], "validity_unit": plan["validity_unit"], "upi_record_id": "",
+               "upi_id": "", "created_at": now, "expires_at": now, "user": _user_dict(user)}
+        db.set(f"/txns/{txn_id}", old)
+    done = _complete(ctx, old, "shorturl", "shortener")
+    log_action("shorturl.key", f"{app['name']} / {old['plan_label']} via {shortener_name}", target=txn_id, source="bot",
+               actor=f"user:{user['chat_id']}")
+    return done
 
 
 # ------------------------------------------------------------------ create: wallet deposit
@@ -415,7 +452,7 @@ def _complete(ctx, txn, actor_name, source, already_success=False):
         app=app, chat_id=u["chat_id"], full_name=u["full_name"], username=u.get("username", ""),
         profile_image_url=u.get("profile_image_url", ""), profile_file_id=u.get("profile_file_id", ""),
         amount=txn.get("plan_price", cash), validity_value=txn["validity_value"], validity_unit=txn["validity_unit"],
-        source="trial" if txn.get("trial") else "bot", txn_id=txn_id, plan_id=txn["plan_id"],
+        source="shorturl" if txn.get("short") else ("trial" if txn.get("trial") else "bot"), txn_id=txn_id, plan_id=txn["plan_id"],
         upi_id=txn.get("upi_record_id", ""), reseller_id=txn.get("reseller_id", ""), record_earning=False)
     reseller = ctx.reseller or {}
     if sale > 0:

@@ -282,7 +282,7 @@ def set_price(rid, plan, price=None, enabled=True):
 def counts():
     cats = {c["id"] for c in db.get_list("/categories") if not c.get("deleted")}
     apps = [a for a in db.get_list("/apps") if not a.get("deleted") and a.get("status", "live") == "live"]
-    plans = [p for p in db.get_list("/plans") if not p.get("deleted") and p.get("kind") != "trial"]
+    plans = [p for p in db.get_list("/plans") if not p.get("deleted") and p.get("kind") not in ("trial", "short")]
     return {"categories": len(cats), "apps": len(apps), "plans": len(plans)}
 
 

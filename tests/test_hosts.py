@@ -145,4 +145,16 @@ for f in ("logo-login.jpg", "logo-welcome.jpg", "mark.png", "icon-192.png", "ico
 docs = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static/js/pages/s_docs.js")).read()
 ok("smali" not in docs.lower() and "cpp:" in docs and "#include <curl/curl.h>" in docs and "['cpp', 'C++']" in docs, "API docs: smali removed, C++ added")
 
+
+# ---------------------------------------------------------------- step-gate API (the Cloudflare worker's BACKEND_URL)
+Config.PROXY_SECRET = "proxy-secret-for-tests"
+PX = {"X-DH-Proxy": Config.PROXY_SECRET}
+ok(req(RENDER, "/api/health", secret=None).status_code == 200, "gate: /api/health answers on the Render address (UptimeRobot)")
+ok(req(RENDER, "/api/ping", secret=None, headers=PX).status_code == 200, "gate: /api/ping on the Render address with the proxy secret")
+ok(NF(req(RENDER, "/api/ping", secret=None)), "gate: no proxy secret -> 404")
+ok(req(RENDER, "/api/init", method="post", secret=None, headers=PX, json={"t": "x"}).get_json() == {"ok": False}, "gate: /api/init reachable for the worker")
+ok(NF(req(RENDER, "/api/v1/verify", secret=None)) and NF(req(RENDER, "/login", secret=None)), "Render address still serves nothing else")
+ok(NF(req(PANEL, "/api/ping", headers=PX)), "gate does not exist on the panel host")
+ok(req(API, "/api/ping", headers=PX).status_code == 200 and NF(req(API, "/api/ping", secret=None, headers=PX)), "gate on the api. host works only through Cloudflare (origin lock)")
+
 print("ALL HOST TESTS OK")

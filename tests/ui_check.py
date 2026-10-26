@@ -50,6 +50,22 @@ base = {"user_id": "111", "amount": 199, "app_id": db.get_list("/apps")[0]["id"]
         "user": {"chat_id": "111", "full_name": "Rahul K", "username": "u111", "profile_image_url": "", "profile_file_id": ""}}
 db.set("/txns/TXNPENDING01", {**base, "id": "TXNPENDING01", "status": "pending"})
 
+# shortener data for the new page
+from services import shortener  # noqa: E402
+c.put("/admin/api/shorteners/config", json={"site_url": "https://dekhohatke.com", "pages": "/blog/a/\n/blog/b/\n/blog/c/"}, headers=H)
+_sl = j(c.post("/admin/api/shorteners", json={"name": "Free key · 3 pages", "kind": "license", "pages": 3, "top_min": 15, "top_max": 25, "bottom_min": 10, "bottom_max": 20}, headers=H))["item"]
+_rd = j(c.post("/admin/api/shorteners", json={"name": "Promo redirect", "kind": "redirect", "redirect_url": "https://example.com/offer", "pages": 2, "top_min": 5, "top_max": 5, "bottom_min": 5, "bottom_max": 5}, headers=H))["item"]
+_sh = shortener.shortener(_sl["id"])
+for _i, (_cur, _st) in enumerate([(3, "done"), (1, "expired"), (2, "active"), (0, "expired")]):
+    _s = shortener._new_session(_sh, user={"chat_id": f"90{_i}", "full_name": f"Visitor {_i}", "username": f"vis{_i}"})
+    _s.update(cur=min(_cur, 2), status=_st, first_visit=_s["created"] + 3, pt=[_s["created"] + 40 * (k + 1) for k in range(_cur)], spent=120)
+    if _st == "done":
+        _s.update(done_at=_s["created"] + 130, delivered=True, lic_key="ABCD1234EFGH5678IJ")
+        shortener._bump(_sl["id"], "done"); [shortener._bump(_sl["id"], f"p{k}") for k in (1, 2, 3)]
+    elif _st == "expired":
+        shortener._bump(_sl["id"], f"left{_cur}")
+shortener.flush()
+
 from werkzeug.serving import make_server  # noqa: E402
 
 srv = make_server("127.0.0.1", 5055, app, threaded=True)
@@ -60,7 +76,7 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 
 problems = []
 ADMIN = ["#/", "#/users", "#/earning", "#/upi", "#/plans", "#/purchase", "#/balance", "#/checkin", "#/spin", "#/referral", "#/leaderboard", "#/broadcast", "#/promotion",
-         "#/reseller", "#/seller", "#/logs", "#/settings"]
+         "#/reseller", "#/seller", "#/shortener", "#/logs", "#/settings"]
 RESELLER = ["#/", "#/users", "#/earning", "#/upi", "#/prices", "#/referral", "#/balance", "#/due", "#/support", "#/settings"]
 SELLER = ["#/", "#/create", "#/publish", "#/docs", "#/apps", "#/wallet", "#/broadcast", "#/settings"]
 
@@ -129,6 +145,39 @@ with sync_playwright() as p:
         pk = page.query_selector("#body [data-app]")
         if pk:
             pk.click(); page.wait_for_timeout(500); page.screenshot(path=f"{out}/{label}-admin-plans-app.png")
+        # ---- shortener: history -> tracking -> create form -> plan form with the dropdown, light + dark switch contrast
+        page.evaluate("location.hash = '#/shortener'"); page.wait_for_timeout(900)
+        if "Free key" not in page.inner_text("#body"):
+            problems.append(f"[{label}/admin] shortener history lists no shortener")
+        page.click("[data-open]"); page.wait_for_timeout(1000)
+        page.screenshot(path=f"{out}/{label}-admin-shortener-track.png", full_page=True)
+        if "Where do users stop" not in page.inner_text("#body") or "Left after completing page" not in page.inner_text("#body"):
+            problems.append(f"[{label}/admin] tracking page has no drop-off funnel")
+        page.click("[data-k=expired]") if page.query_selector("[data-k=expired]") else None
+        page.wait_for_timeout(500)
+        page.click("#rb [data-v=custom]"); page.wait_for_timeout(300)
+        page.screenshot(path=f"{out}/{label}-admin-shortener-range.png")
+        page.evaluate("location.hash = '#/plans'"); page.wait_for_timeout(300); page.evaluate("location.hash = '#/shortener'"); page.wait_for_timeout(800)
+        page.click("#tabs [data-k=create]"); page.wait_for_timeout(600)
+        page.screenshot(path=f"{out}/{label}-admin-shortener-create.png", full_page=True)
+        page.evaluate("location.hash = '#/plans'"); page.wait_for_timeout(700)
+        pk = page.query_selector("#body [data-app]")
+        if pk:
+            pk.click(); page.wait_for_timeout(400)
+            page.click("#add"); page.wait_for_timeout(500)
+            if "free via short link" not in page.inner_text(".modal").lower():
+                problems.append(f"[{label}/admin] plan form has no short-link dropdown")
+            for theme in ("light", "dark"):
+                page.evaluate(f"document.documentElement.dataset.theme = '{theme}'"); page.wait_for_timeout(250)
+                lum = page.evaluate("""() => { const i = document.querySelector('.modal .switch input:not(:checked) + i'); if (!i) return -1;
+                  const m = getComputedStyle(i).backgroundColor.match(/[\\d.]+/g).map(Number); const a = m[3] === undefined ? 1 : m[3];
+                  const bg = getComputedStyle(document.querySelector('.modal')).backgroundColor.match(/[\\d.]+/g).map(Number);
+                  const mix = [0, 1, 2].map((k) => m[k] * a + bg[k] * (1 - a)); return Math.abs(mix.reduce((x, y) => x + y, 0) - bg.slice(0, 3).reduce((x, y) => x + y, 0)) / 3; }""")
+                if lum < 25:
+                    problems.append(f"[{label}/admin] switch OFF state is not visible against the dialog in the {theme} theme (contrast {lum})")
+                page.screenshot(path=f"{out}/{label}-admin-plan-form-{theme}.png")
+            page.evaluate("document.documentElement.dataset.theme = 'dark'")
+            page.keyboard.press("Escape")
         page.fill("#globalSearch", "Rahul"); page.press("#globalSearch", "Enter"); page.wait_for_timeout(1200)
         page.screenshot(path=f"{out}/{label}-admin-search.png")
         ctx.close()

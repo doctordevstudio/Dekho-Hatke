@@ -4,7 +4,8 @@ Sub-domain mode (ROOT_DOMAIN set) -- Render's free plan has two custom domains, 
   drdev.<domain>   every panel:  admin (/ and /login -- both "Unauthorised" without the bot's signed /go/<token> link; /admin/api/*), seller (/seller, /seller/api/*),
                    reseller (/reseller, /reseller/api/*), plus /static and /media
   api.<domain>     the license verification API only (/api/v1/*)
-  anything else    (the raw xxxx.onrender.com address): ONLY Telegram's webhooks (/telegram/*) and /healthz
+  anything else    (the raw xxxx.onrender.com address): ONLY Telegram's webhooks (/telegram/*), /healthz and the shortener's step-gate
+                   API (/api/init|event|verify|ping|health -- the Cloudflare worker's backend; the app requires its X-DH-Proxy secret)
 Every other path on a host is an identical plain 404, so a panel never shows up on the API host and vice versa.
 
 Origin lock (ORIGIN_SECRET set): Cloudflare adds `X-Origin-Auth: <secret>` to every request it forwards for the two
@@ -15,15 +16,22 @@ and the secret header token that the webhook handler checks.
 """
 import hmac
 import ipaddress
+import logging
+import time
 
 from config import Config
 
+log = logging.getLogger("hosts")
+_last_refusal = [0.0]
+
+# the step-gate API the Cloudflare worker calls (guarded inside the app by the X-DH-Proxy secret)
+GATE_PATHS = ("/api/init", "/api/event", "/api/verify", "/api/ping", "/api/health")
 OPEN_PATHS = ("/healthz",)  # keep-alive pings and Render's health check never need the secret or a known host
 STATIC = ("/static/", "/media/")
 RULES = {
     "panel": {"exact": {"/", "/login", "/seller", "/reseller", "/reseller/logout", "/favicon.ico", "/robots.txt"},
               "prefix": ("/go/", "/admin/api/", "/seller/api/", "/reseller/api/") + STATIC},
-    "api": {"exact": {"/robots.txt"}, "prefix": ("/api/v1/",)},
+    "api": {"exact": {"/robots.txt"} | set(GATE_PATHS), "prefix": ("/api/v1/",)},
 }
 
 
@@ -50,10 +58,22 @@ class HostRouter:
                 return _plain(start_response)
             return self.app(environ, start_response)
 
+        # The step-gate API on the raw Render address (the worker's BACKEND_URL): no origin lock there -- the app itself
+        # requires X-DH-Proxy. On the panel host it does not exist; on the api host it passes the normal origin lock below.
+        if path in GATE_PATHS and Config.HOST_MODE and kind != "api":
+            if kind == "panel":
+                return _plain(start_response)
+            environ["gz.host_kind"] = "gate"
+            return self.app(environ, start_response)
+
         # 1) origin lock (the two custom domains are reached through Cloudflare) --------------------------------------
         if Config.ORIGIN_SECRET and (kind or not Config.HOST_MODE):
             got = environ.get("HTTP_" + Config.ORIGIN_HEADER.upper().replace("-", "_"), "")
             if not hmac.compare_digest(got.encode("utf-8", "ignore"), Config.ORIGIN_SECRET.encode()):
+                if time.time() - _last_refusal[0] > 30:  # at most one line per 30 s; never logs the secret
+                    _last_refusal[0] = time.time()
+                    log.warning("origin lock refused %s %s: %s header %s -> check the Cloudflare Transform Rule value equals ORIGIN_SECRET",
+                                host, path, Config.ORIGIN_HEADER, "is missing" if not got else "has a different value")
                 return _plain(start_response)
             cf_ip = (environ.get("HTTP_CF_CONNECTING_IP") or "").strip()
             if cf_ip:

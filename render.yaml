@@ -16,6 +16,10 @@ services:
         value: dekhohatke.com
       - key: ORIGIN_SECRET        # add AFTER the Cloudflare "origin lock header" rule exists (Step 5)
         sync: false
+      - key: PROXY_SECRET         # shortener: same value as in your Cloudflare worker (header X-DH-Proxy) -- see SHORTENER_SETUP.md
+        sync: false
+      - key: SITE_URL
+        value: https://dekhohatke.com
       - key: FIREBASE_DB_URL
         sync: false
       - key: FIREBASE_CREDENTIALS_JSON

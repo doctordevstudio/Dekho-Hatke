@@ -48,6 +48,8 @@ def plan_days(p):
 
 def price_for(plan, tenant=""):
     """Effective price + enabled flag for a tenant ('' = main shop)."""
+    if plan.get("kind") == "short":  # Free (short link) plans exist in the main shop only
+        return 0, not tenant
     if not tenant or plan.get("kind") == "trial":
         return plan.get("amount", 0), True
     ov = db.get(f"/reseller_prices/{tenant}/{plan['id']}") or {}
@@ -63,6 +65,8 @@ def plans_for(app_id, tenant=""):
         if p["app_id"] != app_id or p.get("disabled"):
             continue
         if p.get("kind") == "trial" and tenant and app_id not in trials:  # reseller shops show trials only when enabled
+            continue
+        if p.get("kind") == "short" and not _short_ready(p):
             continue
         price, enabled = price_for(p, tenant)
         if not enabled:
@@ -116,8 +120,15 @@ def tree(tenant=""):
     return out
 
 
+def _short_ready(plan):
+    from services import shortener
+    return shortener.plan_ready(plan)
+
+
 def _visible(plan, tenant, trials=None):
     if plan.get("disabled"):
+        return False
+    if plan.get("kind") == "short" and (tenant or not _short_ready(plan)):
         return False
     if plan.get("kind") == "trial":
         return (not tenant) or plan["app_id"] in (trials or {})

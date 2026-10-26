@@ -85,6 +85,8 @@ def plan_label(p, selected=False):
     label = utils.validity_label(p["validity_value"], p["validity_unit"])
     if p.get("kind") == "trial":
         txt = f"🎁 FREE TRIAL · {label}"
+    elif p.get("kind") == "short":
+        txt = f"🆓 {label} — FREE"
     else:
         txt = f"{'⭐ ' if p.get('is_best') else ''}{label} — {utils.inr(p['price'])}"
         if p.get("save_pct"):
@@ -107,29 +109,32 @@ def app_caption(app, plans, users_now=0, selected=None):
                    f"— only {esc(utils.inr(best['per_day']))}/day")
     if any(p.get("kind") == "trial" for p in plans):
         out.append("🎁 <b>Try it free</b> before you buy!")
-    out.append("\n👇 <b>Choose your plan</b>" + (" — tap <b>Continue</b> to confirm" if selected else ""))
+    out.append("\n👇 <b>Choose your plan</b>")
     return "\n".join(out)[:1020]
 
 
-def confirm_text(q, use_wallet, bd_preview):
-    """q from payments.quote(); bd_preview = (wallet_part, cash)."""
-    p, app = q["plan"], q["app"]
-    wal, cash = bd_preview
+def confirm_text(q, use_wallet=False, bd_preview=(0, 0)):
+    """The order summary shown right after a plan is tapped. q from payments.quote()."""
+    app = q["app"]
     lines = ["🧾 <b>Confirm your order</b>", LINE, f"📱 App: <b>{esc(app['name'])}</b>",
              f"📦 Plan: <b>{esc(q['label'])}</b>" + (" 🎁 FREE TRIAL" if q["trial"] else "")]
-    if q["trial"]:
+    if q.get("short"):
+        sh = q.get("sh") or {}
+        n = int(sh.get("pages", 1))
+        lines += ["💰 Price: <b>FREE 🆓</b>", "",
+                  f"Unlock it by completing <b>{n} page{'s' if n != 1 else ''}</b> on our website. I'll message you after every "
+                  "page and send your <b>license key</b>, the <b>APK</b> and the <b>setup video</b> as soon as you finish.",
+                  "", "Do you want to continue?"]
+    elif q["trial"]:
         lines += ["💰 Price: <b>FREE</b>", "", "You'll instantly get your <b>license key</b>, the <b>APK</b> and the "
                                                 "<b>setup video</b>.", "", "Start your free trial?"]
     else:
-        lines.append(f"💰 Price: <b>{esc(utils.inr(q['price']))}</b>")
-        if use_wallet and wal:
-            lines.append(f"👛 From wallet: <b>-{esc(utils.inr(wal))}</b>")
-            lines.append(f"🏦 To pay by UPI: <b>{esc(utils.inr(cash))}</b>" if cash > 0 else "✅ Fully paid from your wallet")
-        lines += ["", "Do you want to purchase it?"]
+        lines += [f"💰 Price: <b>{esc(utils.inr(q['price']))}</b>", "", "Do you want to purchase it?"]
     return "\n".join(lines)
 
 
-def wallet_question(q):
+def payment_options(q):
+    """Shown after 'Yes' when the user has wallet money: choose how to pay."""
     b = q["wallet"]
     parts = []
     if b["bonus"]:
@@ -138,9 +143,13 @@ def wallet_question(q):
         parts.append(f"💳 Deposit: <b>{esc(utils.inr(b['deposit']))}</b>")
     if b["refer"]:
         parts.append(f"🎁 Refer money: <b>{esc(utils.inr(b['refer']))}</b>")
-    return ("👛 <b>Use your wallet money?</b>\n" + LINE + f"\n📱 {esc(q['app']['name'])} — {esc(q['label'])}\n"
-            f"💰 Price: <b>{esc(utils.inr(q['price']))}</b>\n\nYou have:\n" + "\n".join(parts) +
-            f"\n\n💡 Using your wallet means you pay less (or nothing) by UPI.")
+    return ("💳 <b>Choose how to pay</b>\n" + LINE + f"\n📱 {esc(q['app']['name'])} — {esc(q['label'])}\n"
+            f"💰 Price: <b>{esc(utils.inr(q['price']))}</b>\n\n👛 Your wallet:\n" + "\n".join(parts) +
+            "\n\n💡 Paying from the wallet means you pay less (or nothing) by UPI.")
+
+
+def wallet_question(q):  # kept for older callers
+    return payment_options(q)
 
 
 def payment_caption(txn, note=""):
@@ -168,8 +177,9 @@ def card_markup(txn_id):
 
 
 def license_done_text(txn, lic, wallet_total=0):
-    lines = ["🎉 <b>Payment verified!</b>" if txn.get("via") not in ("trial", "wallet") else
-             ("🎁 <b>Your free trial is ready!</b>" if txn.get("via") == "trial" else "✅ <b>Order complete!</b>"), LINE,
+    head = {"trial": "🎁 <b>Your free trial is ready!</b>", "wallet": "✅ <b>Order complete!</b>",
+            "shorturl": "🎉 <b>All steps verified — your free key is ready!</b>"}.get(txn.get("via"), "🎉 <b>Payment verified!</b>")
+    lines = [head, LINE,
              f"📱 <b>{esc(txn['app_name'])}</b>", f"🔑 Your license key:\n<code>{lic['key']}</code>", "",
              f"📦 Plan: {esc(txn['plan_label'])}", f"⏳ Valid until: {utils.fmt_dt(lic['expires_at'])}"]
     if wallet_total:

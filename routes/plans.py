@@ -3,14 +3,17 @@ from flask import g, jsonify, request
 from core import db, utils
 from core.audit import log_action
 from core.errors import ApiError
-from services import catalog
+from services import catalog, shortener
 from .apps import get_app_or_404
 from . import body, bp
 
 
-def _public(p, app_names, sold, upis=None):
+def _public(p, app_names, sold, upis=None, shorts=None):
     u = (upis or {}).get(p.get("upi_id") or "")
-    return {"disabled": bool(p.get("disabled")), "sort": int(p.get("sort") or 0), "upi_id": p.get("upi_id") or "",
+    sh = (shorts or {}).get(p.get("shorturl_id") or "")
+    return {"shorturl_id": p.get("shorturl_id") or "", "shorturl_name": (sh or {}).get("name", "") if p.get("shorturl_id") else "",
+            "shorturl_ok": bool(sh and not sh.get("deleted") and sh.get("active", True)),
+            "disabled": bool(p.get("disabled")), "sort": int(p.get("sort") or 0), "upi_id": p.get("upi_id") or "",
             "upi_label": (u.get("name") or u.get("upi_id")) if u else ("" if not p.get("upi_id") else "(removed)"),
             "id": p["id"], "app_id": p["app_id"], "app_name": app_names.get(p["app_id"], ""),
             "kind": p.get("kind", "paid"), "is_best": bool(p.get("is_best")),
@@ -47,6 +50,7 @@ def list_plans():
     plans.sort(key=lambda p: (names.get(p["app_id"], ""), 0 if int(p.get("sort") or 0) > 0 else 1, int(p.get("sort") or 0),
                               p.get("kind") != "trial", p["amount"]))
     upis = {u["id"]: u for u in db.get_list("/upis") if not u.get("deleted") and not u.get("reseller_id")}
+    shorts = {r["id"]: r for r in shortener.all_shorteners(include_deleted=True)}
     empty = {"main": 0, "reseller": 0, "amount_main": 0, "amount_reseller": 0}
     app_rows = []
     for aid, a in apps.items():
@@ -56,7 +60,7 @@ def list_plans():
                          "sold_main": s["main"], "sold_reseller": s["reseller"], "sold": s["main"] + s["reseller"],
                          "amount_main": s["amount_main"], "amount_reseller": s["amount_reseller"]})
     app_rows.sort(key=lambda r: (-r["sold"], r["app_name"].lower()))
-    return jsonify(items=[_public(p, names, {k: v["main"] + v["reseller"] for k, v in by_plan.items()}, upis) | {
+    return jsonify(items=[_public(p, names, {k: v["main"] + v["reseller"] for k, v in by_plan.items()}, upis, shorts) | {
         "sold_main": (by_plan.get(p["id"]) or empty)["main"], "sold_reseller": (by_plan.get(p["id"]) or empty)["reseller"]}
         for p in plans], apps=app_rows,
         totals={"main": sum(v["main"] for v in by_app.values()), "reseller": sum(v["reseller"] for v in by_app.values()),
@@ -106,7 +110,7 @@ def _sort(d, current=None):
 
 def _upi(d, kind, current=""):
     """'' / 'random' = round-robin over all active UPI IDs; otherwise the id of one of the main shop's UPI records."""
-    if kind == "trial":
+    if kind in ("trial", "short"):
         return ""
     if "upi_id" not in d:
         return current or ""
@@ -131,11 +135,24 @@ def disable_plan(pid):
     return jsonify(ok=True, disabled=dis)
 
 
-def _read(d):
-    kind = "trial" if str(d.get("kind")) == "trial" else "paid"
+def _read(d, short=""):
+    kind = "trial" if str(d.get("kind")) == "trial" else ("short" if short else "paid")
     val, unit = utils.parse_validity(d.get("validity_value"), d.get("validity_unit"))
-    amount = 0 if kind == "trial" else utils.parse_amount(d.get("amount"))
+    amount = 0 if kind in ("trial", "short") else utils.parse_amount(d.get("amount"))
     return kind, amount, val, unit, bool(d.get("is_best")) and kind == "paid"
+
+
+def _short(d, current=""):
+    """'' = a normal plan; otherwise the id of a shortener that generates license keys (Free via short link)."""
+    if "shorturl_id" not in d:
+        return current or ""
+    v = str(d.get("shorturl_id") or "")
+    if not v or str(d.get("kind")) == "trial":
+        return ""
+    sh = shortener.shortener(v)
+    if not sh or sh.get("kind") != "license" or not sh.get("active", True):
+        raise ApiError("Choose a shortener that generates license keys and is switched on.")
+    return v
 
 
 def _one_per_app(app_id, kind, best, keep_id=None):
@@ -153,14 +170,16 @@ def _one_per_app(app_id, kind, best, keep_id=None):
 def create_plan():
     d = body()
     app = get_app_or_404(str(d.get("app_id", "")))
-    kind, amount, val, unit, best = _read(d)
+    short = _short(d)
+    kind, amount, val, unit, best = _read(d, short)
     sort, upi = _sort(d), _upi(d, kind)
     _one_per_app(app["id"], kind, best)
     pid = utils.new_id("plan")
     db.set(f"/plans/{pid}", {"id": pid, "app_id": app["id"], "kind": kind, "is_best": best, "amount": amount, "sort": sort, "upi_id": upi,
+                             "shorturl_id": short,
                              "validity_value": val, "validity_unit": unit, "created_at": utils.now(),
                              "created_by": g.admin["username"]})
-    what = "FREE TRIAL" if kind == "trial" else utils.inr(amount)
+    what = "FREE TRIAL" if kind == "trial" else ("FREE via short link " + short if kind == "short" else utils.inr(amount))
     log_action("plan.created", f"{app['name']} {what} / {utils.validity_label(val, unit)} · sort {sort} · {'UPI ' + upi if upi else 'random UPI'}", target=pid)
     return jsonify(ok=True, id=pid), 201
 
@@ -176,11 +195,12 @@ def _get_plan(pid):
 def edit_plan(pid):
     p = _get_plan(pid)
     d = body()
-    d.setdefault("kind", p.get("kind", "paid"))
-    kind, amount, val, unit, best = _read(d)
+    d.setdefault("kind", "trial" if p.get("kind") == "trial" else "paid")
+    short = _short(d, p.get("shorturl_id"))
+    kind, amount, val, unit, best = _read(d, short)
     sort, upi = _sort(d, p.get("sort")), _upi(d, kind, p.get("upi_id"))
     _one_per_app(p["app_id"], kind, best, keep_id=pid)
-    db.update(f"/plans/{pid}", {"kind": kind, "is_best": best, "sort": sort, "upi_id": upi, "amount": amount, "validity_value": val,
+    db.update(f"/plans/{pid}", {"kind": kind, "is_best": best, "sort": sort, "upi_id": upi, "amount": amount, "shorturl_id": short, "validity_value": val,
                                 "validity_unit": unit, "updated_at": utils.now()})
     log_action("plan.edited", f"{utils.inr(p['amount'])} -> {utils.inr(amount)} / {utils.validity_label(val, unit)}"
                + (" (best)" if best else ""), target=pid)

@@ -61,6 +61,16 @@ class Config:
     TG_API_ID = _int("TG_API_ID", _int("API_ID", 0))
     TG_API_HASH = (os.getenv("TG_API_HASH") or os.getenv("API_HASH") or "").strip()
     ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")  # can also be set from the panel
+    # ---- shortener (step-gate on the blog pages of the root domain) ----
+    # The blog pages load /assets/gate.js, which calls /api/init|event|verify|ping|health through your Cloudflare worker.
+    # The worker sends X-DH-Proxy: <PROXY_SECRET> and X-DH-IP: <real visitor ip>. Without PROXY_SECRET the gate API stays closed.
+    SITE_URL = (os.getenv("SITE_URL") or "https://dekhohatke.com").strip().rstrip("/")
+    PROXY_SECRET = os.getenv("PROXY_SECRET", "").strip()
+    TURNSTILE_SITEKEY = os.getenv("TURNSTILE_SITEKEY", "").strip()
+    TURNSTILE_SECRET = os.getenv("TURNSTILE_SECRET", "").strip()
+    GATE_GRACE = float(os.getenv("GATE_GRACE", "0.35"))              # timer / network jitter allowed on every timing check (s)
+    GATE_MIN_SCROLL_GAP = float(os.getenv("GATE_MIN_SCROLL_GAP", "1.2"))  # min seconds between the top and the bottom click
+    GATE_IP_LIMIT = _int("GATE_IP_LIMIT", 90)                        # gate API calls per visitor ip per minute
     # ---- domain / Cloudflare (two custom domains: Render's free plan allows two) ----
     # ROOT_DOMAIN=dekhohatke.com turns it on:
     #   drdev.<domain>  -> ALL panels: admin ( / and /login ), /seller, /reseller   (PANEL_HOST)

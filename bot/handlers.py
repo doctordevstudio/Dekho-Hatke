@@ -18,7 +18,7 @@ from bot.tg import EFFECT_PARTY, TelegramError
 from core import admin_gate, db, utils
 from core.audit import log_action
 from core.errors import ApiError
-from services import bans, catalog, delivery, media, notify, payments, referral, resellers, rewards, sellers, settings, tgchannel, tgfiles, users, wallet, wheel
+from services import bans, catalog, delivery, media, notify, payments, referral, resellers, rewards, sellers, settings, shortener, tgchannel, tgfiles, users, wallet, wheel
 from services import licenses as lic_svc
 
 log = logging.getLogger("bot")
@@ -297,7 +297,8 @@ def show_categories(ctx, uid, cq=None):
     btns = [(f"{c['icon']} {c['name']} ({len(c['apps'])})", f"cat:{c['id']}") for c in tree]
     rows = [btns[i:i + 2] for i in range(0, len(btns), 2)]
     rows.append([("🏠 Home", "home")])
-    screen(ctx, uid, "🛒 <b>Purchase</b>\n" + m.LINE + "\n\nPick a category 👇", m.kb(*rows), cq=cq)
+    screen(ctx, uid, "🛒 <b>Purchase</b>\n" + m.LINE + "\n\nPick a category 👇", m.kb(*rows),
+           media=("photo", delivery.BRAND_LOGO), cq=cq, same_media=True)
 
 
 def show_category(ctx, uid, cat_id, cq=None):
@@ -326,21 +327,17 @@ def show_app(ctx, uid, app_id, selected=None, cq=None):
     app, plans = _app_and_plans(ctx, app_id)
     if not app or not plans:
         return show_categories(ctx, uid, cq)
-    rows = [[(m.plan_label(p, selected == p["id"]), f"pl:{p['id']}")] for p in plans]
-    sel = next((p for p in plans if p["id"] == selected), None)
-    if sel:
-        rows.append([("✅ Continue — " + utils.validity_label(sel["validity_value"], sel["validity_unit"]),
-                      f"pc:{sel['id']}")])
+    rows = [[(m.plan_label(p), f"pl:{p['id']}")] for p in plans]  # tapping a plan goes straight to the confirmation
     rows.append([("⬅️ Back", f"cat:{app.get('category_id') or catalog.OTHER_ID}"), ("🏠 Home", "home")])
     users_now = _active_users(app_id)
-    text = m.app_caption(app, plans, users_now, selected)
+    text = m.app_caption(app, plans, users_now)
     media = None
     if app.get("video_id"):
         media = ("video", app["video_id"])
     elif app.get("image_url"):
         media = ("photo", app["image_url"] if app["image_url"].startswith(("http", "/media/img/")) else None)
         media = media if media[1] else None
-    screen(ctx, uid, text, m.kb(*rows), media=media, cq=cq, same_media=bool(selected) or True)
+    screen(ctx, uid, text, m.kb(*rows), media=media, cq=cq, same_media=True)
 
 
 _au_cache = {}
@@ -355,31 +352,67 @@ def _active_users(app_id):
     return n
 
 
-def plan_continue(ctx, user, plan_id, cq):
+def _gone(ctx, uid, cq):
+    return screen(ctx, uid, "That plan is no longer available.", m.kb([("🛒 Purchase", "buy")]), cq=cq)
+
+
+def confirm_plan(ctx, user, plan_id, cq):
+    """A plan was tapped: show the order summary with Yes / No right away (no second price selection)."""
     uid = user["chat_id"]
     q = payments.quote(ctx, user, plan_id)
     if not q:
-        return screen(ctx, uid, "That plan is no longer available.", m.kb([("🛒 Purchase", "buy")]), cq=cq)
+        return _gone(ctx, uid, cq)
     if is_locked(ctx):
         return show_categories(ctx, uid, cq)
-    if not q["trial"] and q["wallet"]["total"] > 0:
-        usable = min(q["wallet"]["total"], q["price"])
-        return screen(ctx, uid, m.wallet_question(q), m.kb(
-            [(f"👛 Use wallet (−{utils.inr(usable)})", f"pw:{plan_id}:1")],
-            [(f"🏦 Pay {utils.inr(q['price'])} by UPI", f"pw:{plan_id}:0")],
-            [("⬅️ Back", f"ap:{q['app']['id']}")]), cq=cq)
-    confirm_order(ctx, user, plan_id, False, cq)
+    screen(ctx, uid, m.confirm_text(q),
+           m.kb([("✅ Yes", f"py:{plan_id}"), ("❌ No", f"ap:{q['app']['id']}")]), cq=cq)
 
 
-def confirm_order(ctx, user, plan_id, use_wallet, cq):
+def proceed_plan(ctx, user, plan_id, cq):
+    """'Yes' was tapped: a Free short-link plan starts its steps, a trial is claimed, otherwise the user picks how to pay
+    (wallet / UPI -- the choice is only shown when a wallet balance exists)."""
     uid = user["chat_id"]
     q = payments.quote(ctx, user, plan_id)
     if not q:
-        return screen(ctx, uid, "That plan is no longer available.", m.kb([("🛒 Purchase", "buy")]), cq=cq)
-    wal = min(q["wallet"]["total"], q["price"]) if use_wallet and not q["trial"] else 0
-    cash = round(q["price"] - wal, 2)
-    screen(ctx, uid, m.confirm_text(q, use_wallet, (wal, cash)),
-           m.kb([("✅ Yes", f"by:{plan_id}:{1 if use_wallet else 0}"), ("❌ No", f"ap:{q['app']['id']}")]), cq=cq)
+        return _gone(ctx, uid, cq)
+    if is_locked(ctx):
+        return show_categories(ctx, uid, cq)
+    if q["short"]:
+        return start_short(ctx, user, q, cq)
+    if not q["trial"] and q["wallet"]["total"] > 0:
+        usable = min(q["wallet"]["total"], q["price"])
+        return screen(ctx, uid, m.payment_options(q), m.kb(
+            [(f"👛 Pay from wallet (−{utils.inr(usable)})", f"by:{plan_id}:1")],
+            [(f"🏦 Pay {utils.inr(q['price'])} by UPI", f"by:{plan_id}:0")],
+            [("⬅️ Back", f"ap:{q['app']['id']}")]), cq=cq)
+    do_buy(ctx, user, plan_id, False, cq)
+
+
+def start_short(ctx, user, q, cq):
+    """Free plan unlocked by a short link: create the user's own link and hand it over."""
+    uid = user["chat_id"]
+    status, s, sh = shortener.start_for_user(ctx, user, q["plan"])
+    back = m.kb([("🛒 Purchase", "buy"), ("🏠 Home", "home")])
+    if status == "unavailable":
+        return _gone(ctx, uid, cq)
+    if status == "daily_limit":
+        return screen(ctx, uid, f"🚫 You reached today's limit of <b>{int(sh.get('daily_limit', 0))}</b> free key"
+                                f"{'s' if int(sh.get('daily_limit', 0)) != 1 else ''} for this plan. Come back tomorrow!", back, cq=cq)
+    if status == "cooldown":
+        return screen(ctx, uid, "⏳ Please wait a few seconds before creating another link.", back, cq=cq)
+    link = shortener.full_url(s["code"], s["steps"][0])
+    total = len(s["steps"])
+    mins = int(sh.get("ttl_min", 45))
+    head = "ℹ️ <b>You already have an open link</b>" if status == "existing" else "🔗 <b>Your link is ready!</b>"
+    text = (f"{head}\n{m.LINE}\n\n📱 <b>{m.esc(q['app']['name'])}</b> — {m.esc(q['label'])} · <b>FREE</b>\n\n"
+            f"Complete all <b>{total} page{'s' if total != 1 else ''}</b> on the website. I'll message you after every page, and "
+            f"your <b>license key</b> arrives here the moment the last step is done.\n\n⏱ Valid for {mins} minutes.")
+    drop_screen(ctx, uid)
+    send(ctx, uid, text, m.kb([("🚀 Open link", "url:" + link)], [("🏠 Home", "home")]))
+
+
+def plan_continue(ctx, user, plan_id, cq):  # old "Continue" buttons still in chats
+    confirm_plan(ctx, user, plan_id, cq)
 
 
 def do_buy(ctx, user, plan_id, use_wallet, cq):
@@ -1468,20 +1501,19 @@ def on_callback(ctx, cq):
         return show_keys(ctx, user, cq, int(arg) if str(arg).isdigit() else 0)
     if head in ("home", "buy", "wallet", "refer", "checkin", "spin", "keys", "reseller", "seller"):
         return run_action(ctx, user, head, cq)
-    if is_locked(ctx) and head in ("cat", "ap", "pl", "plan", "pc", "pw", "by"):
+    if is_locked(ctx) and head in ("cat", "ap", "pl", "plan", "pc", "py", "pw", "by"):
         return screen(ctx, uid, "🛠 <b>Store under maintenance</b>\n" + m.LINE + "\n\n" + locked_text(ctx), cq=cq)
     if head == "cat":
         show_category(ctx, uid, arg, cq)
     elif head == "ap":
         show_app(ctx, uid, arg, None, cq)
-    elif head in ("pl", "plan"):  # "plan:<id>" comes from promotion broadcasts
-        p = catalog.get_plan(arg)
-        show_app(ctx, uid, p["app_id"], arg, cq) if p else show_categories(ctx, uid, cq)
-    elif head == "pc":
-        plan_continue(ctx, user, arg, cq)
-    elif head == "pw":
+    elif head in ("pl", "plan", "pc"):  # "plan:<id>" comes from promotion broadcasts; "pc" = old Continue buttons
+        confirm_plan(ctx, user, arg, cq)
+    elif head == "py":
+        proceed_plan(ctx, user, arg, cq)
+    elif head == "pw":  # old wallet-question buttons
         pid, _, w = arg.partition(":")
-        confirm_order(ctx, user, pid, w == "1", cq)
+        do_buy(ctx, user, pid, w == "1", cq)
     elif head == "by":
         pid, _, w = arg.partition(":")
         do_buy(ctx, user, pid, w == "1", cq)

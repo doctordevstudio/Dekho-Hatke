@@ -81,7 +81,7 @@ def seed_admin2():
 def _background(app):
     from bot.handlers import sweep_rewards
     from bot.tg import TelegramError, tg
-    from services import broadcast, notify, payments, resellers
+    from services import broadcast, notify, payments, resellers, shortener
 
     def housekeeping():
         time.sleep(10)
@@ -114,6 +114,7 @@ def _background(app):
             except Exception as e:
                 log.warning("reseller %s webhook failed: %s", r.get("name"), e)
 
+    shortener.start()  # step-gate engine: flusher + sweeper threads
     threading.Thread(target=housekeeping, daemon=True, name="housekeeping").start()
     threading.Thread(target=register_webhooks, daemon=True, name="webhook-setup").start()
 
@@ -142,11 +143,12 @@ def create_app(background=True):
 
     from routes import bp as admin_bp, rbp, sbp
     from routes.media_routes import media_bp
+    from routes.gate import gate_bp
     from routes.pages import pages
     from routes.public_api import api_bp
     from routes.webhook import webhook_bp
 
-    for b in (pages, admin_bp, rbp, sbp, api_bp, media_bp, webhook_bp):
+    for b in (pages, admin_bp, rbp, sbp, api_bp, media_bp, webhook_bp, gate_bp):
         app.register_blueprint(b)
 
     @app.before_request
