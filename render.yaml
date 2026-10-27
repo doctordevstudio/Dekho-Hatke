@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: gz-admin-panel
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app --workers 1 --worker-class gthread --threads 40 --timeout 300 --keep-alive 30 --bind 0.0.0.0:$PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: SECRET_KEY
+        generateValue: true
+      # ---- Dekho Hatke two-domain mode (see CLOUDFLARE_SETUP.md) ----
+      - key: ROOT_DOMAIN          # drdev.<domain> = all panels, api.<domain> = license API; the Render address then serves Telegram only
+        value: dekhohatke.com
+      - key: ORIGIN_SECRET        # add AFTER the Cloudflare "origin lock header" rule exists (Step 5)
+        sync: false
+      - key: PROXY_SECRET         # shortener: same value as in your Cloudflare worker (header X-DH-Proxy) -- see SHORTENER_SETUP.md
+        sync: false
+      - key: SITE_URL
+        value: https://dekhohatke.com
+      - key: FIREBASE_DB_URL
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN2_USERNAME
+        sync: false
+      - key: ADMIN2_PASSWORD
+        sync: false
+      - key: ADMIN2_CHAT_ID
+        sync: false
+      - key: TG_API_ID            # my.telegram.org -> API development tools (for the linked Telegram account)
+        sync: false
+      - key: TG_API_HASH
+        sync: false
+      - key: TIMEZONE
+        value: Asia/Kolkata
