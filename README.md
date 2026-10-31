@@ -1,0 +1,154 @@
+# ⚡ Dekho Hatke — admin / seller / reseller panels + Telegram license-selling bot
+
+Python (Flask) · HTML/CSS/JS · Firebase Realtime Database · built for **Render free web service**.
+
+* **Admin panel** (`/`) — dashboard, Purchase (categories → apps → plans), users, earnings, UPI IDs, balance & wallets, referral & withdrawals, daily check-in / spin wheel, broadcast, leaderboard, resellers, **sellers (review queue)**, logs, settings. A second admin (env vars) can do everything except delete.
+* **Reseller panel** (`/reseller`) — each reseller runs their own bot (own token, UPI, prices ≥ yours), sees earnings, dues, support, force-join; the store is locked automatically when dues pass your limit.
+* **Seller panel** (`/seller`) — sellers create an API, publish apps (video, logo, plans, APK) for your review, read integration docs, withdraw earnings, broadcast to their buyers (after your approval).
+* **Telegram bot** — force-join → category → app → plan → pay by UPI (auto-generated QR, wallet optional) → screenshot + UTR → verify → key + APK + setup video. Refer & Earn, wallet, daily check-in, spin wheel, free trials.
+* **License API** — your apps call `POST /api/v1/<app_id>/verify` (see [API_DOCS.md](API_DOCS.md))
+
+## 1. Firebase (5 min)
+1. [console.firebase.google.com](https://console.firebase.google.com) → create project → **Build → Realtime Database → Create database** (any region).
+2. **Rules** tab → paste the content of `database.rules.json` → Publish. (Clients are locked out; only your server, via the service account, can read/write. The indexes make queries fast.)
+3. **Project settings → Service accounts → Generate new private key** → a JSON file downloads.
+4. Copy the database URL (looks like `https://xxxx-default-rtdb.firebaseio.com`).
+
+## 2. Telegram bot
+1. [@BotFather](https://t.me/BotFather) → `/newbot` → copy the **token**.
+2. Add the bot as **administrator** in each channel you want to force-join (needed to check membership).
+3. Get your own chat id from [@userinfobot](https://t.me/userinfobot) — this is your **Admin Chat ID** (also message your bot once with /start so it can write to you). Each UPI owner must also press /start on the bot once.
+
+## 3. Deploy on Render
+1. Push this folder to a GitHub repo (the `.gitignore` keeps secrets out).
+2. Render → **New → Web Service** → pick the repo (or use *Blueprint* with `render.yaml`).
+   * Build: `pip install -r requirements.txt && (pip install -r requirements-crypto.txt || true) && bash scripts/install_monero.sh` (the blueprint already has it; the last two steps are optional and never fail the deploy)
+   * Start: `gunicorn wsgi:app --workers 1 --worker-class gthread --threads 40 --timeout 300 --keep-alive 30 --bind 0.0.0.0:$PORT`
+   * Health check path: `/healthz`
+3. **Environment variables**
+
+| Variable | Value |
+|---|---|
+| `SECRET_KEY` | long random string (Render can generate it) |
+| `FIREBASE_DB_URL` | your database URL |
+| `FIREBASE_CREDENTIALS_JSON` | the whole service-account JSON pasted on one line |
+| `BOT_TOKEN` | token from BotFather |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | first admin (password: 10+ chars, letters + numbers). If you omit the password, a random one is printed once in the Render logs |
+| `ADMIN_CHAT_ID` | optional; can be set in Settings → Telegram bot |
+| `ADMIN2_USERNAME` / `ADMIN2_PASSWORD` / `ADMIN2_CHAT_ID` | optional second admin (everything except deleting); synced from env on every start |
+| `TIMEZONE` | default `Asia/Kolkata` (used for today / yesterday) |
+| `ROOT_DOMAIN` | `dekhohatke.com` → two custom domains: `drdev.` (admin, `/seller`, `/reseller`) and `api.` (license API); the Render address serves Telegram only (see **CLOUDFLARE_SETUP.md**) |
+| `TG_API_ID` / `TG_API_HASH` | from my.telegram.org → API development tools; only needed to link a personal Telegram account (Settings → Channel & account). Keep `SECRET_KEY` fixed: it encrypts the saved session |
+| `ADMIN_GATE` / `ADMIN_LINK_MINUTES` | default `1` / `30`: the admin sign-in page shows only after the bot's signed **Admin Login** link (`0` = open, local dev only) |
+| `PROXY_SECRET` / `SITE_URL` | **Shortener** (step-gate on your blog pages): see `SHORTENER_SETUP.md` |
+| `XMR_KEYPASS` | **Monero gateway** — the password that encrypts the wallet seed before it is stored in Firebase. Choose it **before** creating the wallet and never change it afterwards (see the Monero section) |
+| `XMR_NODE` / `XMR_NODES` | public remote node, default `node.moneroworld.com:18089`; `XMR_NODES` = extra nodes (comma separated) used as fallbacks and to cross-check a payment |
+| `ORIGIN_SECRET` | secret that Cloudflare adds as header `X-Origin-Auth`; without it the two custom domains answer 404 |
+
+4. Open `https://drdev.dekhohatke.com` (or `https://YOUR-SERVICE.onrender.com` while ROOT_DOMAIN is not set) → sign in → **Settings → Telegram bot**: set Admin Chat ID, support username, welcome message → Save → **Send test**.
+   The webhook registers itself on every start (button *Re-register webhook* if ever needed).
+5. **Home → New app**, **Plans → Add plan**, **UPI ID → Add UPI** (upload the QR), **Settings → Force join** (add channels). Open your bot and try a purchase.
+
+### ⚠️ Render free tier sleeps
+Free services sleep after ~15 min without traffic; the first request then takes ~30–60 s. Telegram retries
+webhooks, so the bot recovers, but to keep it snappy ping `https://YOUR-SERVICE.onrender.com/healthz` every
+5 minutes with a free monitor (UptimeRobot / cron-job.org). Payment expiry (10 min) is also swept while the
+service is awake, and re-checked whenever the panel or a user touches a transaction.
+
+## 🌐 Domain, Cloudflare and speed
+Full step-by-step guide (DNS records, Render custom domains, WAF / bot / data-centre / rate-limit rules, origin lock, verification): **[CLOUDFLARE_SETUP.md](CLOUDFLARE_SETUP.md)**.
+
+Speed work in this code base:
+* **Bot replies** — the webhook answers Telegram instantly and processes the update on a 24-thread pool; a per-user lock + 0.9 s click gate drops accidental double taps; the catalog tree is cached for 5 s; Telegram file ids are cached (a photo/video is uploaded once per bot, then sent by id — the logo too); long lists are paged 5 per page.
+* **Database** — read-through cache for the hot Firebase paths with a version counter that is bumped on every write (reads stay correct, repeated reads are in-memory); admin / reseller / seller sessions are cached for 15 s.
+* **Panels** — gzip on every JSON / JS / CSS / HTML response, `gunicorn` gthread with 40 threads and 30 s keep-alive, paged tables, debounced search, no framework (ES modules), lazy-loaded page scripts.
+* **Edge (new)** — behind Cloudflare, `/static/*` (JS, CSS, logo, icons) is cached at the nearest Cloudflare location with `Cache-Control`, TLS and HTTP/2/3 are terminated at the edge, and Cloudflare keeps connections to Render open — the Render free instance only handles real work (JSON / bot).
+
+## What's new in this version
+* **Shortener direct mode**: the website's `gate.js` calls the Render address straight from the browser (CORS, only from `SITE_URL`), so Cloudflare rules on the root domain can't block it. `GATE_DIRECT=0` returns to worker-only; `GATE_ORIGINS` adds extra allowed sites.
+* **🖼 Bot screens** (admin: Settings → *Bot screens*; reseller: Settings → *Bot screens*): change the **picture and message of every screen behind the bot's buttons** — Welcome, Purchase, Category, Plan confirmation, Payment options, My Keys, Wallet, Deposit, Refer & Earn, Check-in, Spin, Support, Join channels (+ Reseller and Become Seller on the main bot). Each reseller edits **their own bot only**; the admin's pictures never appear in a reseller's bot. Telegram allows 1024 characters under a picture — longer screens are sent without it.
+* **Reseller bots now always deliver the APK and setup video**: if the file has no copy in the storage channel yet, the main bot posts it there by id (any size) and the reseller's bot copies it to the customer. Failure alerts to the owner now include Telegram's real reason, for the video as well as the APK.
+* **🔗 Shortener** (nav drawer): create step-gate links on your blog pages (pages, top / bottom waits, link validity, per-user limits) that end in a **license key sent by the bot** or in a **redirect**. Plans can be made **Free via short link** (bot shows *FREE*). History per shortener: successes for today / yesterday / all time / custom range, **drop-offs per page**, every link tracked. In-memory engine with write-behind to Firebase, retried Telegram delivery, per-visitor rate limits — see `SHORTENER_SETUP.md`. The bot's plan flow is now: tap plan → confirmation → payment options; the category list shows the Dekho Hatke logo.
+* **No external file storage (Appwrite removed)**: sellers and admins **send the APK / videos to the bot**; the bot replies with the file id and remembers who sent it. The Publish wizard has *APK file id* / *Preview video id* / *Setup video id* boxes (plus tap-to-use chips of your own files); the server accepts only ids from files **that seller sent**. Admins get the same chips in the app form, and the review page can *send the seller's file to your Telegram* by id. File ids are visible only to the sender (and to admins reviewing a submission).
+* **Dekho Hatke branding + sub-domains**: your logo is the favicon, home-screen icon, sign-in image and panel header, and the picture on the bot's /start welcome (unless a custom welcome image is set). `drdev.` serves all three panels, `api.` only the license API; the two custom domains are locked to Cloudflare and the bots reach Render directly; the real visitor IP is used for limits. API docs: **smali removed, C++ (libcurl) added**.
+* **Seller Publish App** is a step-by-step dialog (details → logo & videos → plans + **free trial** → APK → **live APK testing** → review). Progress is saved as a **draft** automatically; leave any time and press *Continue draft*. Live testing = test key, login, 2nd-device refusal, maintenance, revoked key — all required before submit. Every detail is required except setup video, free trial and support contact; file type / name / size are checked in the browser and on the server (`.apk` only for APKs).
+* **Create API / admin-created seller or reseller / manual license** ask for complete data (fields marked *, hints inside every box).
+* **Become Seller** is done from the bot (the web sign-up is gone): *Become Seller* → message → button → account with **username = Telegram chat id** and a long random password (re-tap to reset).
+* **Plans**: every plan has a **sort number** (1 = shown first) and a **UPI ID** (one fixed UPI, or random round-robin). The Plans page lists apps first; click an app to see its plans, with sales split **admin bot vs reseller bots**.
+* **Enable / disable**: whole **category**, one **app** (🛒 *Selling* switch — existing customers keep working) or one **plan** can be hidden from the bot's Purchase flow. Resellers can additionally hide categories, apps, plans and the free trial in their own bot, and raise prices up to **+100 %** of the base.
+* **Promotion** page: pick an app → send its plans as buttons to *all users*, *chosen users* or *a number of random users*. **Rank** categories and apps by drag & drop and **highlight** (🔥) apps.
+* **Feature switches** (Settings → Features): Refer & Earn, Reseller sign-ups, Seller sign-ups.
+* **Bot**: single-tap rule (rapid taps on different buttons run only the first), Refer & Earn asks to confirm before showing the link, *Download APK* button under every live key (sends APK + setup video), 5-per-page lists for keys / referrals / history, check-in animation, 2-decimal check-in / spin amounts, `/block <chat_id>` (asks a reason; blocked users get **no reply at all**; also from the panel), the ≡ menu shows only `/start`, and **new-user alerts go only to the super admin and 2nd admin**.
+* **Security**: every panel write carries a signed timestamp + one-time nonce (`X-Req-Ts`, `X-Req-Nonce`, `X-Req-Sig = HMAC-SHA256(csrf, METHOD|path|ts|nonce)`), so a captured request cannot be replayed (window 120 s). File ids (APK / video) are shown only to the seller, admin and super admin.
+
+## What's new: Monero, pay-as-you-go, FAQs, bot appearance
+* **₿ Monero (XMR) payments** (nav drawer → *Crypto*, **Super Admin only**; the 2nd admin and view-only admins can't see the tab and the server refuses every `/crypto/*` call from them):
+  1. Render → Environment → add `XMR_KEYPASS` (any strong password) → redeploy.
+  2. Open **Crypto** → *Create wallet* → type the same password. A fresh wallet is made, its 25-word seed is **encrypted** (scrypt + AES-256-GCM) and stored in Firebase; the current block height is saved as the *restore height*. After every restart (Render's disk is wiped) the wallet is restored from that seed - no `.keys` file is ever needed. **Download the seed** right away (Crypto → *Download seed phrase*, asks the password).
+  3. *Settings → Monero gateway*: set **₹ per 1 USD** (used to turn ₹ plan prices into USD for crypto), the **main address** for *Transfer to main account*, minimum order ($0.10) and the on/off switch.
+  4. *Plans*: each plan allows **UPI**, **Crypto** or **both** and has its own currency (₹ / $). A ₹ plan is divided by the rate above for crypto. The 🪙 Crypto button shows only when the wallet is configured.
+  * Bot flow: the user picks Crypto → a **unique subaddress** + QR + exact XMR amount (live price: CoinGecko → Kraken → Coinbase) valid **60 minutes**. The poller scans the **remote node** from the saved block height only; with **1 confirmation** the order is *Paid* and the key is sent automatically (marked *Auto verify*). After 60 minutes the order is *Expired* and no longer queried. Bonus (check-in, spin) and refer wallet amounts cannot be used for crypto orders.
+  * **Wallet deposits in crypto**: in *Settings → Monero gateway* set **Fixed rate: ₹ per 1 XMR** (e.g. 15000). Users then see **Deposit Money → UPI / Crypto (XMR)** in the bot; the wallet screen shows the fixed rate, an order for ₹200 asks for exactly ₹200 ÷ rate XMR, and after 1 confirmation the wallet is credited with *what arrived × that rate* (an overpayment is credited in full). The market price is never used for deposits; changing the rate affects new orders only. Leave the rate empty to hide crypto deposits. Main bot only. The Crypto tab also shows the wallet balance valued at this fixed rate.
+  * Crypto tab: wallet configured ✅, balance, money received (All time / Today / Yesterday / custom range), crypto orders, **Transfer to main account** (password again), transfer history, **Download seed phrase**.
+  * Needs `monero-wallet-rpc` (installed to `./bin` by `scripts/install_monero.sh`, verified against the official SHA-256 list). It runs on 127.0.0.1 only and connects to the public remote node - **no local blockchain or daemon**. Without the binary everything else works and the Crypto tab explains what is missing. The free 512 MB instance can be tight while the wallet re-syncs: restore height keeps it short (scan starts at the saved height, and moves forward after each transfer).
+  * Trust note: a public node can lie about *incoming* payments. Add one or two more nodes in `XMR_NODES` and every payment is cross-checked on a second node before it is accepted.
+* **📟 Pay-as-you-go ("Limit system") apps**: when creating an app choose *Plan type* → **Hourly / days** or **Limit system**. A limit plan has **requests** + **price** (+ optional expiry, or *never expires*). The buyer gets a normal license key; your backend calls **`/consume`** on every request and gets the remaining balance back (see `API_DOCS.md`). Works with *Apk* or *Message* delivery, like every app.
+* **📨 App delivery**: *APK* (as before) or *Message* - after payment only the setup video, the license key and your message (text/HTML) are sent. Apps also have a **provider name** ("This service is provided by X") shown while buying; created from admin, the admin can rename it.
+* **❓ FAQs** (nav drawer): add / edit / delete questions; the bot shows them 10 per page with an answer screen; *Who viewed* lists the users and the question they opened.
+* **🎨 Appearance** (Settings → *Appearance*, also in the reseller panel): button **colours** per group (blue / green / red), **1 per row or 2 per row** layouts, automatic **reactions** after a purchase and other right actions, celebration **GIFs** (deleted after a few seconds, spin-wheel GIF after 3 s), FAQ page size, UPI window and the max payment requests per user per day. Colours use Telegram's button styles (Bot API 9.4+); older apps show the normal button.
+* **🖼 Bot screens** has new screens: *How to pay*, crypto payment card, FAQ - each with its own picture + message.
+* **Users**: the admin can edit every user field (name, wallet, bonus, referral, join date…) from the user dialog.
+
+## Daily operations cheat-sheet
+* **Sell**: Purchase → add category → add app (video id, setup video id, APK id, category) → add plans (paid / free trial, hours · days · years). Telegram file ids: just send any video / APK / photo to your bot as admin — it replies with the file id.
+* **UPI**: add UPI IDs (round-robin). The QR is generated from `upi://pay?pa=…&am=…` per transaction; your uploaded QR image is only a fallback. UPI owners press /start and get **My Payment Collection** (today / yesterday / all; pending / failed / success; name, amount, counts — never @username).
+* **Referral**: Referral page → default % (per-user override on the user's detail), withdrawals approve/reject with reason + photo. Commission is lifetime and every referrer gets a notification (name, plan, app, commission, new balance — no chat id / username).
+* **Resellers**: Resellers → add (bot token, name, UPI, commission %, due limit, login). They log in at `/reseller`. When earnings since the last settlement reach the limit their bot is put in maintenance until you press **Settle**.
+* **Sellers**: Sellers section → settings (platform commission %, min withdraw, withdraw fee %). Submissions queue → open → *Generate test key* → run the four live checks from your own test app (login, second-device, maintenance, revoke) → **Approve** (only enabled when all four pass). The seller's APK / videos arrive as Telegram file ids (the seller sent them to the bot); use **📲 Send to my Telegram** to install and try the APK, then approve.
+* **Bot admin commands** (super admin & 2nd admin): `/help`, `/send <chat_id> <message>`, `/broadcast` (preview → Confirm / Cancel, shows recipient count), `/pending` (pending payments grouped by UPI id).
+* **Broadcast**: text/HTML, image/video/file, URL button; history with edit / re-broadcast / delete (reflected in user chats). Seller broadcasts wait for your approval and reach only that seller's buyers.
+
+## How the important rules work
+* **Payments**: 10-minute window · max **5 requests / user / day** · a user with a txn *in verification* can't start another · failed txns can be retried · one screenshot / UTR can't be reused.
+* **Screenshots** must be real JPG/PNG images (decoded and re-encoded); anything else is refused.
+* **Privacy**: sellers and referrers only ever see names — never chat ids or usernames. IP addresses are logged but never shown.
+* **Soft delete**: nothing is ever removed from the database — "delete" sets `deleted: true`.
+* **Referral**: default % + per-user override; wallets: Deposit and Refer money with min deposit / withdraw; the user chooses whether to use the wallet before confirming a purchase.
+* **Daily check-in / spin**: random between min and max, expiry, reminders, resets at 12 AM; admin stats for valid / expired / claimed / used.
+* **Logs** are split into sections (payments, users, referral, resellers, sellers, settings, security …).
+* **Admins**: first admin full control; 2nd admin (env) can do everything except delete; *view-only* admins can read everything.
+
+## Security checklist (what's built in)
+signed one-time requests (anti-replay) on every panel write · HTTPS-only secure cookies (`__Host-` prefix) · HttpOnly + SameSite · CSRF token on every change · strict CSP (no inline JS/handlers) · clickjacking/MIME/referrer headers · login rate limit + persistent lockout (5 fails → 15 min) for admin, reseller and seller logins · separate session scopes (a reseller/seller session can never call the admin API) · server-side role enforcement · input validation + escaping · image uploads decoded + re-encoded · per-bot webhook secret path **and** Telegram secret header · public API: API key + per-IP / per-license rate limits + guess lockout · Firebase locked by rules (`database.rules.json`, with indexes).
+
+## Known limitations / decisions
+* Sub-domain mode assumes **one** Render instance (limits and nonces live in memory). The Cloudflare rules are documented, not code: apply them from `CLOUDFLARE_SETUP.md`.
+* Reseller bots re-upload the APK/video (Telegram file ids are bot-specific) → files > 20 MB can't be delivered by a reseller bot via the Bot API download limit.
+* APKs and videos are never stored by the shop: sellers/admins send them to the bot, Telegram keeps them and the shop keeps only the file id (Telegram accepts files up to 2 GB). Ids are recorded per sender, shown only to that sender, and a seller can only attach ids from their own list.
+* A blocked user is silenced in every bot, but their licenses keep working. Reseller free trials are OFF until the reseller enables them. The bot ignores a second button tap within 0.9 s of the previous accepted one.
+* Seller platform commission defaults to **0 %** (set it in Sellers → settings).
+* Super admin can force-approve a submission without passing all checks (logged); the 2nd admin can't.
+* The Render free tier sleeps — ping `/healthz` every 5 minutes (UptimeRobot) and keep a single worker (in-memory rate limits & broadcast threads assume one process).
+
+## Local development
+```bash
+pip install -r requirements.txt
+APP_ENV=development USE_MEMORY_DB=1 ADMIN_PASSWORD=ChangeMe12345 python app.py   # http://127.0.0.1:5000
+python tests/test_flows.py     # catalog, QR, seller publish, admin review checks (no network)
+python tests/test_flows2.py    # referral, seller wallet, reseller, bot admin commands
+python tests/test_flows3.py    # replay guard, drafts + live tests, ban, click gate, plan sort/UPI, enable/disable, promotion, reseller caps, file-id registry (bot → seller panel)
+python tests/test_hosts.py     # sub-domain routing, Cloudflare origin lock, real-IP, logo assets, C++ docs
+python tests/ui_check.py       # headless-browser check of all three panels (needs playwright + chromium)
+```
+`USE_MEMORY_DB=1` is only for tests — data vanishes on restart. Production uses Firebase.
+
+## Project layout
+```
+app.py  wsgi.py  config.py        app factory, entrypoint, env config
+core/        db (Firebase + memory), security, audit, utils, cache
+services/    licenses, payments, stats, referral, rewards, resellers, sellers, tgfiles, reviewchecks, broadcast …
+routes/      admin API, reseller API, seller API, public license API, webhook, media proxy, pages
+bot/         tg client, multi-tenant context, handlers (flow), messages, antispam
+templates/   login / app shells      static/ css + ES-module JS (pages/ per panel)
+tests/       test_flows.py, test_flows2.py, test_flows3.py, test_hosts.py, ui_check.py, harness.py
+```
