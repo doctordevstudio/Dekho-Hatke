@@ -1,0 +1,2 @@
+# Optional: monero-python generates the 25-word seed and validates addresses. If it cannot install, the gateway falls back to monero-wallet-rpc.
+monero>=1.1
